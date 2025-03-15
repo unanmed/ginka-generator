@@ -1,19 +1,20 @@
 import { readFile, writeFile } from 'fs-extra';
 import { join } from 'path';
 import { convertFloor } from './floor';
-import { mergeDataset } from './utils';
+import {
+    FloorData,
+    getAllFloors,
+    mergeDataset,
+    mergeFloorIds,
+    parseTowerInfo
+} from './utils';
 import { compareMap } from './topology/compare';
 import { mirrorMapX, mirrorMapY, rotateMap } from './topology/transform';
 import { directions, tileType } from './topology/graph';
 import { calculateVisualSimilarity } from './vision/similarity';
+import { BaseConfig, TowerInfo } from './types';
 
-interface MinamoConfig {
-    clip: {
-        defaults: [number, number, number, number];
-        special: Record<string, [number, number, number, number]>;
-    };
-    // data: Record<string, Record<string, number>>;
-}
+interface MinamoConfig extends BaseConfig {}
 
 interface MinamoTrainData {
     map1: number[][];
@@ -211,10 +212,9 @@ function generateSimilarData(id: string, map: number[][]) {
 }
 
 function generateDataset(
-    floors: Map<string, number[][]>,
+    floors: Map<string, FloorData>,
     pairs: number[],
-    floorIds: string[],
-    config: MinamoConfig
+    floorIds: string[]
 ): Record<string, MinamoTrainData> {
     const data: Record<string, MinamoTrainData> = {};
 
@@ -223,8 +223,8 @@ function generateDataset(
         const num2 = v % floorIds.length;
         const id1 = floorIds[num1];
         const id2 = floorIds[num2];
-        const map1 = floors.get(id1);
-        const map2 = floors.get(id2);
+        const map1 = floors.get(id1)?.map;
+        const map2 = floors.get(id2)?.map;
         if (!map1 || !map2) return;
         const [w1, h1] = [map1[0].length, map1.length];
         const [w2, h2] = [map2[0].length, map2.length];
@@ -281,44 +281,17 @@ function generateDataset(
     return data;
 }
 
-async function parseOne(path: string): Promise<MinamoDataset> {
-    const dataFile = await readFile(join(path, 'data.js'), 'utf-8');
-    const configFile = await readFile(
-        join(path, 'minamo-config.json'),
-        'utf-8'
-    );
-    const data: any = JSON.parse(dataFile.split('\n').slice(1).join('\n'));
-    const config = JSON.parse(configFile) as MinamoConfig;
-    const floorIds = data.main.floorIds as string[];
-    const name = data.firstData.name as string;
-    const length = floorIds.length;
+function parseAllData(data: Map<string, FloorData>): MinamoDataset {
+    const length = data.size;
     const totalCount = Math.round((length * (length - 1)) / 2);
 
     const pairs = choosePair(length);
 
     console.log(
-        `✅ 在 ${name} 中发现 ${length} 个楼层，共 ${totalCount} 种组合，选取 ${pairs.length} 个组合`
+        `✅ 共发现 ${length} 个楼层，共 ${totalCount} 种组合，选取 ${pairs.length} 个组合`
     );
 
-    const floors = new Map(
-        await Promise.all(
-            floorIds.map<Promise<[string, number[][]]>>(async v => {
-                const file = await readFile(
-                    join(path, 'floors', `${v}.js`),
-                    'utf-8'
-                );
-                const data = file.split('\n').slice(1).join('\n');
-                const json = JSON.parse(data);
-                const map = json.map;
-                const clip = config.clip.special[v] ?? config.clip.defaults;
-                // 裁剪
-                const clipped = convertFloor(map, clip, name, v);
-                return [v, clipped];
-            })
-        )
-    );
-
-    const trainData = generateDataset(floors, pairs, floorIds, config);
+    const trainData = generateDataset(data, pairs, [...data.keys()]);
 
     const dataset: MinamoDataset = {
         datasetId: Math.floor(Math.random() * 1e12),
@@ -329,9 +302,12 @@ async function parseOne(path: string): Promise<MinamoDataset> {
 }
 
 (async () => {
-    const results = await Promise.all(list.map(v => parseOne(v)));
-    const dataset = mergeDataset(...results);
-    await writeFile(output, JSON.stringify(dataset, void 0), 'utf-8');
-    const size = Object.keys(dataset.data).length;
+    const towers = await Promise.all(
+        list.map(v => parseTowerInfo(v, 'minamo-config.json'))
+    );
+    const floors = await getAllFloors(...towers);
+    const results = parseAllData(floors);
+    await writeFile(output, JSON.stringify(results, void 0), 'utf-8');
+    const size = Object.keys(results.data).length;
     console.log(`✅ 已处理 ${list.length} 个塔，共 ${size} 个组合`);
 })();

@@ -1,3 +1,7 @@
 __pycache__
 result
 node_modules
+ginka-dataset.json
+ginka-eval.json
+minamo-dataset.json
+minamo-eval.json
