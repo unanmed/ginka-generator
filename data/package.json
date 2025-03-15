@@ -1,0 +1,25 @@
+{
+    "name": "data",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "ginka": "tsx ./src/ginka.ts",
+        "minamo": "tsx ./src/minamo.ts",
+        "test:topo": "tsx ./src/topology/test.ts",
+        "test:vision": "tsx ./src/vision/test.ts"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "packageManager": "pnpm@10.5.2",
+    "devDependencies": {
+        "@types/fs-extra": "^11.0.4",
+        "@types/node": "^22.13.10",
+        "tsx": "^4.19.3",
+        "vitest": "^3.0.8"
+    },
+    "dependencies": {
+        "fs-extra": "^11.3.0"
+    }
+}
