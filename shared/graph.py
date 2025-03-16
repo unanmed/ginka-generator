@@ -1,5 +1,5 @@
 import torch
-from torch_geometric import Data
+from torch_geometric.data import Data
 
 def convert_map_to_graph(map):
     rows = len(map)
