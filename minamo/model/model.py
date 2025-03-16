@@ -45,7 +45,7 @@ class DirectionalAttention(nn.Module):
         return x * (combined * att_weights.unsqueeze(-1).unsqueeze(-1)).sum(1)
 
 class MinamoModel(nn.Module):
-    def __init__(self, tile_types=32, embedding_dim=64, conv_channels=256):
+    def __init__(self, tile_types=32, embedding_dim=16, conv_channels=32):
         super().__init__()
         # 嵌入层处理不同图块类型
         self.embedding = nn.Embedding(tile_types, embedding_dim)
@@ -57,25 +57,43 @@ class MinamoModel(nn.Module):
             nn.ReLU(),
             nn.Conv2d(conv_channels, conv_channels*2, 3, padding=1),
             DualAttention(conv_channels*2),
+            nn.BatchNorm2d(conv_channels*2),
+            nn.ReLU(),
+            nn.Conv2d(conv_channels*2, conv_channels*4, 3, padding=1),
+            DualAttention(conv_channels*4),
+            nn.BatchNorm2d(conv_channels*4),
+            nn.ReLU(),
+            nn.Conv2d(conv_channels*4, conv_channels*8, 3, padding=1),
+            DualAttention(conv_channels*8),
+            nn.BatchNorm2d(conv_channels*8),
+            nn.ReLU(),
             nn.AdaptiveAvgPool2d(1)
         )
         
         # 拓扑特征分支
         self.topo_conv = nn.Sequential(
             nn.Conv2d(embedding_dim, conv_channels, 5, padding=2),  # 更大卷积核捕捉结构
-            nn.MaxPool2d(2),
+            nn.BatchNorm2d(conv_channels),
+            nn.ReLU(),
+            nn.Conv2d(conv_channels, conv_channels*2, 5, padding=2),  # 更大卷积核捕捉结构
+            nn.BatchNorm2d(conv_channels*2),
+            nn.ReLU(),
+            nn.Conv2d(conv_channels*2, conv_channels*4, 5, padding=2),  # 更大卷积核捕捉结构
+            nn.BatchNorm2d(conv_channels*4),
+            nn.ReLU(),
+            # nn.MaxPool2d(2),
             # GraphConvLayer(128, 256),  # 图卷积层
             nn.AdaptiveMaxPool2d(1)
         )
         
         # 多任务预测头
         self.vision_head = nn.Sequential(
-            nn.Linear(conv_channels*2, 1),
+            nn.Linear(conv_channels*8, 1),
             nn.Sigmoid()
         )
         
         self.topo_head = nn.Sequential(
-            nn.Linear(conv_channels, 1),
+            nn.Linear(conv_channels*4, 1),
             nn.Sigmoid()
         )
 

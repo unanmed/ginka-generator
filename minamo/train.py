@@ -33,21 +33,21 @@ def collate_fn(batch):
     )
 
 def train():
-    print(f"Using {"cuda" if torch.cuda.is_available() else "cpu"} to train model.")
+    print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
     model = MinamoModel(32)
     model.to(device)
 
     # 准备数据集
-    dataset = MinamoDataset("F:/github-ai/ginka-generator/minamo-dataset.json")
-    val_dataset = MinamoDataset("F:/github-ai/ginka-generator/minamo-eval.json")
+    dataset = MinamoDataset("minamo-dataset.json")
+    val_dataset = MinamoDataset("minamo-eval.json")
     dataloader = DataLoader(
         dataset,
-        batch_size=32,
+        batch_size=64,
         shuffle=True
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=32,
+        batch_size=64,
         shuffle=True
     )
     
@@ -98,7 +98,7 @@ def train():
         scheduler.step()
         
         # 每十轮推理一次验证集
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 5 == 0:
             model.eval()
             val_loss = 0
             with torch.no_grad():
