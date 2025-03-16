@@ -8,6 +8,7 @@ class MinamoLoss(nn.Module):
         self.mse = nn.MSELoss()
 
     def forward(self, vis_pred, topo_pred, vis_true, topo_true):
+        # print(vis_pred.shape, topo_pred.shape, vis_true.shape, topo_true.shape)
         # print(vis_pred[0].item(), topo_pred[0].item(), vis_true[0].item(), topo_true[0].item())
         vis_loss = self.mse(vis_pred, vis_true)
         topo_loss = self.mse(topo_pred, topo_true)

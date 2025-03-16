@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 import torch
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from .model.model import MinamoModel
 from .model.loss import MinamoLoss
@@ -63,17 +63,19 @@ def train():
         
         for batch in dataloader:
             # 数据迁移到设备
-            map1, map2, vision_simi, topo_simi = batch
+            map1, map2, vision_simi, topo_simi, graph1, graph2 = batch
             map1 = map1.to(device) # 转为 [B, C, H, W]
             map2 = map2.to(device)
             topo_simi = topo_simi.to(device)
             vision_simi = vision_simi.to(device)
+            graph1 = graph1.to(device)
+            graph2 = graph2.to(device)
             
             # print(map1.shape, map2.shape)
             
             # 前向传播
             optimizer.zero_grad()
-            vision_pred, topo_pred = model(map1, map2)
+            vision_pred, topo_pred = model(map1, map2, graph1, graph2)
             
             # 计算损失
             loss = criterion(vision_pred, topo_pred, vision_simi, topo_simi)
@@ -103,13 +105,15 @@ def train():
             val_loss = 0
             with torch.no_grad():
                 for val_batch in val_loader:
-                    map1_val, map2_val, vision_simi_val, topo_simi_val = val_batch
+                    map1_val, map2_val, vision_simi_val, topo_simi_val, graph1, graph2  = val_batch
                     map1_val = map1_val.to(device)
                     map2_val = map2_val.to(device)
                     vision_simi_val = vision_simi_val.to(device)
                     topo_simi_val = topo_simi_val.to(device)
+                    graph1 = graph1.to(device)
+                    graph2 = graph2.to(device)
                     
-                    vision_pred_val, topo_pred_val = model(map1_val, map2_val)
+                    vision_pred_val, topo_pred_val = model(map1_val, map2_val, graph1, graph2)
                     loss_val = criterion(
                         vision_pred_val, topo_pred_val, 
                         vision_simi_val, topo_simi_val
