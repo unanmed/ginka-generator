@@ -10,6 +10,7 @@ from .dataset import MinamoDataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
+os.makedirs("result/minamo_checkpoint", exist_ok=True)
 
 epochs = 100
 
@@ -51,7 +52,7 @@ def train():
     )
     
     # 设定优化器与调度器
-    optimizer = optim.AdamW(model.parameters(), lr=3e-5, weight_decay=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=5e-3)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     criterion = MinamoLoss()
     
@@ -91,7 +92,7 @@ def train():
             # tqdm.write(f"Gradient Norm: {total_norm:.4f}")  # 正常应保持在1~100之间
             
         ave_loss = total_loss / len(dataloader)
-        tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch} | loss: {ave_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
+        tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {ave_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
         
         # 学习率调整
         scheduler.step()
@@ -116,8 +117,11 @@ def train():
                     val_loss += loss_val.item()
                     
             avg_val_loss = val_loss / len(val_loader)
-            tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation :: loss: {avg_val_loss:.6f}")
-        
+            tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation::loss: {avg_val_loss:.6f}")
+            torch.save({
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+            }, f"result/minamo_checkpoint/{epoch + 1}.pth")
         
     print("Train ended.")
     

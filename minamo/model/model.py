@@ -45,77 +45,52 @@ class DirectionalAttention(nn.Module):
         return x * (combined * att_weights.unsqueeze(-1).unsqueeze(-1)).sum(1)
 
 class MinamoModel(nn.Module):
-    def __init__(self, num_tile_types, embedding_dim=64, conv_channels=256):
+    def __init__(self, tile_types=32, embedding_dim=64, conv_channels=256):
         super().__init__()
         # 嵌入层处理不同图块类型
-        self.embedding = nn.Embedding(num_tile_types, embedding_dim)
+        self.embedding = nn.Embedding(tile_types, embedding_dim)
         
-        # 共享特征提取的卷积层
-        self.conv_layers = nn.Sequential(
+        self.vision_conv = nn.Sequential(
             nn.Conv2d(embedding_dim, conv_channels, 3, padding=1),
             DualAttention(conv_channels),
-            DirectionalAttention(),
-            nn.ReLU(),
             nn.BatchNorm2d(conv_channels),
-            
+            nn.ReLU(),
             nn.Conv2d(conv_channels, conv_channels*2, 3, padding=1),
             DualAttention(conv_channels*2),
-            DirectionalAttention(),
-            nn.ReLU(),
-            nn.BatchNorm2d(conv_channels*2),
-            
-            nn.Conv2d(conv_channels*2, conv_channels*4, 3, padding=1),
-            DualAttention(conv_channels*4),
-            DirectionalAttention(),
-            nn.ReLU(),
-            nn.BatchNorm2d(conv_channels*4),
+            nn.AdaptiveAvgPool2d(1)
         )
         
-        # 自适应池化处理任意尺寸
-        self.pool = nn.ModuleDict({
-            'avg': nn.AdaptiveAvgPool2d((1,1)),
-            'max': nn.AdaptiveMaxPool2d((1,1))
-        })
+        # 拓扑特征分支
+        self.topo_conv = nn.Sequential(
+            nn.Conv2d(embedding_dim, conv_channels, 5, padding=2),  # 更大卷积核捕捉结构
+            nn.MaxPool2d(2),
+            # GraphConvLayer(128, 256),  # 图卷积层
+            nn.AdaptiveMaxPool2d(1)
+        )
         
         # 多任务预测头
-        head_dim = conv_channels * 4 * 2 * 4  # 2个池化，四个交互项
         self.vision_head = nn.Sequential(
-            nn.Linear(head_dim, 512),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, 1),
+            nn.Linear(conv_channels*2, 1),
             nn.Sigmoid()
         )
         
         self.topo_head = nn.Sequential(
-            nn.Linear(head_dim, 512),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, 256),
-            nn.GELU(),
-            nn.Linear(256, 1),
+            nn.Linear(conv_channels, 1),
             nn.Sigmoid()
         )
 
-
     def forward(self, map1, map2):
-        # 增强特征提取
-        def process_map(x):
-            x = self.embedding(x).permute(0,3,1,2)
-            x = self.conv_layers(x)
-            return torch.cat([
-                self.pool['avg'](x),
-                self.pool['max'](x)
-            ], dim=1).flatten(1)
+        e1 = self.embedding(map1).permute(0, 3, 1, 2)
+        e2 = self.embedding(map2).permute(0, 3, 1, 2)
         
-        f1 = process_map(map1)
-        f2 = process_map(map2)
+        v1 = self.vision_conv(e1).squeeze()
+        v2 = self.vision_conv(e2).squeeze()
         
-        # 特征融合
-        combined = torch.cat([f1, f2, f1-f2, f1*f2], dim=1)  # [B, 256]
+        t1 = self.topo_conv(e1).squeeze()
+        t2 = self.topo_conv(e2).squeeze()
         
         # 多任务输出
-        vision_sim = self.vision_head(combined)
-        topo_sim = self.topo_head(combined)
+        vision_sim = self.vision_head(torch.abs(v1 - v2))
+        topo_sim = self.topo_head(torch.abs(t1 - t2))
         
         return vision_sim, topo_sim

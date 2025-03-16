@@ -7,13 +7,13 @@ import {
 } from './interface';
 
 export const tileType = new Set(
-    Array(12)
+    Array(13)
         .fill(0)
         .map((_, i) => i)
 );
 const branchType = new Set([6, 7, 8, 9]);
 const entranceType = new Set([10, 11]);
-const resourceType = new Set([0, 2, 3, 4, 5, 10, 11]);
+const resourceType = new Set([0, 2, 3, 4, 5, 10, 11, 12]);
 
 export const directions: [number, number][] = [
     [-1, 0],

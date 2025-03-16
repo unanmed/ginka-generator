@@ -14,7 +14,8 @@ const numMap: Record<number, number> = {
     161: 11, // 箭头
     162: 11, // 箭头
     163: 11, // 箭头
-    164: 11 // 箭头
+    164: 11, // 箭头
+    53: 12 // 道具
 };
 
 export function convertFloor(

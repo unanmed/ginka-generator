@@ -1,18 +1,10 @@
-import { readFile, writeFile } from 'fs-extra';
-import { join } from 'path';
-import { convertFloor } from './floor';
-import {
-    FloorData,
-    getAllFloors,
-    mergeDataset,
-    mergeFloorIds,
-    parseTowerInfo
-} from './utils';
+import { writeFile } from 'fs-extra';
+import { FloorData, getAllFloors, parseTowerInfo } from './utils';
 import { compareMap } from './topology/compare';
 import { mirrorMapX, mirrorMapY, rotateMap } from './topology/transform';
 import { directions, tileType } from './topology/graph';
 import { calculateVisualSimilarity } from './vision/similarity';
-import { BaseConfig, TowerInfo } from './types';
+import { BaseConfig } from './types';
 
 interface MinamoConfig extends BaseConfig {}
 

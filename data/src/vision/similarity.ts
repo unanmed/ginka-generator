@@ -20,7 +20,8 @@ const DEFAULT_CONFIG: VisualSimilarityConfig = {
         8: 0.6, // 中怪
         9: 0.6, // 强怪
         10: 0.4, // 楼梯
-        11: 0.4 // 箭头
+        11: 0.4, // 箭头
+        12: 0.7 // 道具
     },
     enableVisualFocus: true,
     enableDensityAwareness: true
