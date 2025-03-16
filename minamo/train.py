@@ -52,7 +52,7 @@ def train():
     )
     
     # 设定优化器与调度器
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=5e-3)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-3)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     criterion = MinamoLoss()
     
@@ -85,12 +85,12 @@ def train():
             optimizer.step()
             total_loss += loss.item()
             
-            total_norm = 0
-            for p in model.parameters():
-                if p.grad is not None:
-                    param_norm = p.grad.detach().data.norm(2)
-                    total_norm += param_norm.item() ** 2
-            total_norm = total_norm ** 0.5
+            # total_norm = 0
+            # for p in model.parameters():
+            #     if p.grad is not None:
+            #         param_norm = p.grad.detach().data.norm(2)
+            #         total_norm += param_norm.item() ** 2
+            # total_norm = total_norm ** 0.5
             # tqdm.write(f"Gradient Norm: {total_norm:.4f}")  # 正常应保持在1~100之间
             
         ave_loss = total_loss / len(dataloader)
