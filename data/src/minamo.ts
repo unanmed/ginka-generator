@@ -5,6 +5,7 @@ import { mirrorMapX, mirrorMapY, rotateMap } from './topology/transform';
 import { directions, tileType } from './topology/graph';
 import { calculateVisualSimilarity } from './vision/similarity';
 import { BaseConfig } from './types';
+import { Presets, SingleBar } from 'cli-progress';
 
 interface MinamoConfig extends BaseConfig {}
 
@@ -32,9 +33,9 @@ function chooseFrom<T>(arr: T[], n: number): T[] {
     return copy.slice(0, n);
 }
 
-function choosePair(n: number) {
+function choosePair(n: number, max: number = 1000) {
     const totalCount = Math.round((n * (n - 1)) / 2);
-    const count = Math.min(totalCount, 1000);
+    const count = Math.min(totalCount, max);
     const pairs: number[] = [];
     for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
@@ -79,7 +80,7 @@ function generateTransformData(
         }
     }
     // 随机抽取最多两个
-    const trans = chooseFrom(types, Math.floor(Math.random() * 3));
+    const trans = chooseFrom(types, Math.floor(Math.random() * 2));
     return trans
         .map(([rot, flip]) => {
             const com1 = `${id1}.${rot}.${flip}:${id1}`;
@@ -153,7 +154,7 @@ function generateSimilarData(id: string, map: number[][]) {
     // 生成最多五个微调地图
     const width = map[0].length;
     const height = map.length;
-    const num = Math.floor(Math.random() * 6);
+    const num = Math.floor(Math.random() * 3);
     const res: [id: string, data: MinamoTrainData][] = [];
 
     for (let i = 0; i < num; i++) {
@@ -210,7 +211,11 @@ function generateDataset(
 ): Record<string, MinamoTrainData> {
     const data: Record<string, MinamoTrainData> = {};
 
-    pairs.forEach(v => {
+    const progress = new SingleBar({}, Presets.shades_classic);
+
+    progress.start(pairs.length, 0);
+
+    pairs.forEach((v, i) => {
         const num1 = Math.floor(v / floorIds.length);
         const num2 = v % floorIds.length;
         const id1 = floorIds[num1];
@@ -268,7 +273,10 @@ function generateDataset(
         // 地图微调训练集
         Object.assign(data, Object.fromEntries(generateSimilarData(id1, map1)));
         // Object.assign(data, Object.fromEntries(generateSimilarData(id2, map2)));
+        progress.update(i + 1);
     });
+
+    progress.stop();
 
     return data;
 }
@@ -277,7 +285,7 @@ function parseAllData(data: Map<string, FloorData>): MinamoDataset {
     const length = data.size;
     const totalCount = Math.round((length * (length - 1)) / 2);
 
-    const pairs = choosePair(length);
+    const pairs = choosePair(length, 10000);
 
     console.log(
         `✅ 共发现 ${length} 个楼层，共 ${totalCount} 种组合，选取 ${pairs.length} 个组合`

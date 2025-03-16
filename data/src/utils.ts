@@ -1,7 +1,7 @@
 import { readFile } from 'fs-extra';
 import { join } from 'path';
 import { BaseConfig, TowerInfo } from './types';
-import { convertFloor } from './floor';
+import { convertApeiriaMap, convertFloor } from './floor';
 
 interface DatasetMergable<T> {
     datasetId: number;
@@ -67,7 +67,30 @@ export async function parseTowerInfo(
 
 export async function getAllFloors(...info: TowerInfo[]) {
     const floorData = await Promise.all(
-        info.map(tower => {
+        info.map(async tower => {
+            // 获取必要信息
+            const enemyFile = await readFile(
+                join(tower.path, 'enemys.js'),
+                'utf-8'
+            );
+            const mapFile = await readFile(
+                join(tower.path, 'maps.js'),
+                'utf-8'
+            );
+            const enemyMap = JSON.parse(
+                enemyFile.split('\n').slice(1).join('\n')
+            ) as Record<string, any>;
+            const mapData = JSON.parse(
+                mapFile.split('\n').slice(1).join('\n')
+            ) as Record<number, any>;
+            const enemyNumMap: Record<number, any> = {};
+            // 将怪物转化为数字映射
+            for (const [key, value] of Object.entries(mapData)) {
+                if (value.cls === 'enemys') {
+                    enemyNumMap[parseInt(key)] = enemyMap[value.id];
+                }
+            }
+
             return Promise.all(
                 tower.floorIds.map(async id => {
                     const floorFile = await readFile(
@@ -75,13 +98,25 @@ export async function getAllFloors(...info: TowerInfo[]) {
                         'utf-8'
                     );
                     const data = JSON.parse(
-                        floorFile.split('\n').slice(1).join('\n')
+                        floorFile
+                            .replaceAll("'", '"')
+                            .slice(floorFile.indexOf('=') + 1)
                     );
                     const map = data.map as number[][];
                     // 裁剪地图
                     const { clip } = tower.config;
                     const area = clip.special[id] ?? clip.defaults;
-                    return convertFloor(map, area, tower.name, id);
+                    if (tower.name === 'Apeiria') {
+                        return convertApeiriaMap(
+                            map,
+                            area,
+                            tower.name,
+                            id,
+                            enemyNumMap
+                        );
+                    } else {
+                        return convertFloor(map, area, tower.name, id);
+                    }
                 })
             );
         })
