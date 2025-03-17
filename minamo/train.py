@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/minamo_checkpoint", exist_ok=True)
 
-epochs = 100
+epochs = 150
 
 def collate_fn(batch):
     """动态处理不同尺寸地图的批处理"""
@@ -52,8 +52,8 @@ def train():
     )
     
     # 设定优化器与调度器
-    optimizer = optim.AdamW(model.parameters(), lr=5e-4, weight_decay=1e-2)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     criterion = MinamoLoss()
     
     # 开始训练

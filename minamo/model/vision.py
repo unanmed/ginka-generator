@@ -14,21 +14,21 @@ class MinamoVisionModel(nn.Module):
             nn.Conv2d(embedding_dim, conv_channels, 3, padding=1),
             nn.BatchNorm2d(conv_channels),
             CBAM(conv_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.MaxPool2d(2),
-            nn.Dropout2d(0.3),
+            nn.Dropout2d(0.4),
             
             nn.Conv2d(conv_channels, conv_channels*2, 3, padding=1),
             nn.BatchNorm2d(conv_channels*2),
             CBAM(conv_channels*2),
-            nn.ReLU(),
+            nn.GELU(),
             nn.MaxPool2d(2),
-            nn.Dropout2d(0.3),
+            nn.Dropout2d(0.4),
             
             nn.Conv2d(conv_channels*2, conv_channels*4, 3, padding=1),
             nn.BatchNorm2d(conv_channels*4),
             CBAM(conv_channels*4),
-            nn.ReLU(),
+            nn.GELU(),
             
             nn.AdaptiveMaxPool2d(1)
         )
