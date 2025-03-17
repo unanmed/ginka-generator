@@ -6,7 +6,7 @@ from torch_geometric.data import Data
 
 class MinamoTopoModel(nn.Module):
     def __init__(
-        self, tile_types=32, emb_dim=16, hidden_dim=32, out_dim=16, mlp_dim=8
+        self, tile_types=32, emb_dim=64, hidden_dim=64, out_dim=512, mlp_dim=128
     ):
         super().__init__()
         # 嵌入层
@@ -27,9 +27,7 @@ class MinamoTopoModel(nn.Module):
         
         # 增强MLP
         self.fc = nn.Sequential(
-            nn.Linear(out_dim, mlp_dim*2),
-            nn.ReLU(),
-            nn.Linear(mlp_dim*2, mlp_dim)
+            nn.Linear(out_dim, mlp_dim),
         )
         
     def forward(self, graph: Data):
@@ -50,6 +48,8 @@ class MinamoTopoModel(nn.Module):
         # x, _, _, batch, _, _ = self.pool(x, graph.edge_index, batch=graph.batch)
         x = global_mean_pool(x, graph.batch)
         
+        topo_vec = self.fc(x)
+        
         # 增强MLP
-        return self.fc(x)
+        return F.normalize(topo_vec, p=2, dim=-1)
     
