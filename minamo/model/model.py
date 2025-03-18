@@ -18,7 +18,4 @@ class MinamoModel(nn.Module):
         topo_feat1 = self.topo_model(graph1)
         topo_feat2 = self.topo_model(graph2)
         
-        vision_sim = F.cosine_similarity(vision_feat1, vision_feat2, -1).unsqueeze(-1)
-        topo_sim = F.cosine_similarity(topo_feat1, topo_feat2, -1).unsqueeze(-1)
-        
-        return vision_sim, topo_sim
+        return vision_feat1, vision_feat2, topo_feat1, topo_feat2
