@@ -1,8 +1,8 @@
 import json
-import random
 import torch
 from torch.utils.data import Dataset
-from transformers import BertTokenizer
+from minamo.model.model import MinamoModel
+from shared.graph import convert_map_to_graph
 
 def load_data(path: str):
     with open(path, 'r', encoding="utf-8") as f:
@@ -15,11 +15,10 @@ def load_data(path: str):
     return data_list
 
 class GinkaDataset(Dataset):
-    def __init__(self, data_path: str, tokenizer: BertTokenizer, max_len=128):
+    def __init__(self, data_path: str, minamo: MinamoModel):
         self.data = load_data(data_path)  # 自定义数据加载函数
-        self.tokenizer = tokenizer
-        self.max_len = max_len
         self.max_size = 32
+        self.minamo = minamo
 
     def __len__(self):
         return len(self.data)
@@ -27,28 +26,13 @@ class GinkaDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         
-        # 文本处理
-        text = random.choice(item["text"])
-        encoding = self.tokenizer(
-            text,
-            max_length=self.max_len,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt"
-        )
-        
-        # 噪声生成
-        w, h = item["size"]
-        noise = torch.randn(h, w, 1)
-        
-        # 目标矩阵填充
-        target = torch.full((self.max_size, self.max_size), -100)  # 使用-100忽略填充区域
-        target[:h, :w] = torch.tensor(item["map"])
+        target = torch.tensor(item["map"])
+        graph = convert_map_to_graph(target)
+        vision_feat, topo_feat = self.minamo(target, graph)
+        feat_vec = torch.cat([vision_feat, topo_feat])
         
         return {
-            "noise": noise,
-            "input_ids": encoding["input_ids"].squeeze(),
-            "attention_mask": encoding["attention_mask"].squeeze(),
-            "map_size": torch.tensor([h, w]),
+            "feat_vec": feat_vec,
             "target": target
         }
+        

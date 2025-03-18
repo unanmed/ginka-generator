@@ -76,7 +76,8 @@ def train():
             
             # 前向传播
             optimizer.zero_grad()
-            vision_feat1, vision_feat2, topo_feat1, topo_feat2 = model(map1, map2, graph1, graph2)
+            vision_feat1, topo_feat1 = model(map1, graph1)
+            vision_feat2, topo_feat2 = model(map2, graph2)
             
             vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, -1).unsqueeze(-1)
             topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, -1).unsqueeze(-1)

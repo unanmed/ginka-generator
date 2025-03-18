@@ -11,11 +11,8 @@ class MinamoModel(nn.Module):
         # 拓扑相似度部分
         self.topo_model = MinamoTopoModel(tile_types)
 
-    def forward(self, map1, map2, graph1, graph2):
-        vision_feat1 = self.vision_model(map1)
-        vision_feat2 = self.vision_model(map2)
+    def forward(self, map, graph):
+        vision_feat = self.vision_model(map)
+        topo_feat = self.topo_model(graph)
         
-        topo_feat1 = self.topo_model(graph1)
-        topo_feat2 = self.topo_model(graph2)
-        
-        return vision_feat1, vision_feat2, topo_feat1, topo_feat2
+        return vision_feat, topo_feat

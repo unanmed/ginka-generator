@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_toolbelt import losses as L
+from minamo.model.model import MinamoModel
 
 def wall_border_loss(pred: torch.Tensor, probs: torch.Tensor, allow_border=[1, 11]):
     """地图最外层是否为墙"""
@@ -283,7 +283,7 @@ def integrated_count_loss(probs, target, class_list=[0,1,2,3,4,5,6,7,8,9], toler
     return avg_loss
 
 class GinkaLoss(nn.Module):
-    def __init__(self, weight=[0.35, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1, 0.1]):
+    def __init__(self, minamo: MinamoModel, weight=[0.35, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1, 0.1]):
         """Ginka Model 损失函数部分
 
         Args:
@@ -299,13 +299,11 @@ class GinkaLoss(nn.Module):
         """
         super().__init__()
         self.weight = weight
-        self.dice = L.DiceLoss(mode='multiclass')
         self.ce = nn.CrossEntropyLoss()
+        self.minamo = minamo
         
-    def forward(self, pred, target):
+    def forward(self, pred, pred_softmax, target):
         probs = F.softmax(pred, dim=1)
-        # 拓扑结构损失
-        # structure_loss = topology_loss(pred, target)
         # 地图结构损失
         border_loss = wall_border_loss(pred, probs)
         wall_loss = internal_wall_loss(pred, probs)
@@ -314,6 +312,9 @@ class GinkaLoss(nn.Module):
         enemy_loss = monster_consecutive_loss(pred, probs)
         valid_block_loss = illegal_block_loss(pred, probs, used_classes=12, mode="mean")
         count_loss = integrated_count_loss(probs, target)
+        
+        # 使用 Minamo Model 计算相似度
+        
         
         print(
             # structure_loss.item(),
