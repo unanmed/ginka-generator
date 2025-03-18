@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from minamo.model.model import MinamoModel
+from shared.graph import DynamicGraphConverter
 
 def wall_border_loss(pred: torch.Tensor, probs: torch.Tensor, allow_border=[1, 11]):
     """地图最外层是否为墙"""
@@ -131,7 +132,6 @@ def entrance_distance_and_presence_loss(
         total_loss: 综合入口距离与存在性损失
     """
     # 将 logits 转换为概率分布
-    probs = F.softmax(logits, dim=1)  # [B, C, H, W]
     B, C, H, W = logits.shape
 
     # 提取箭头和楼梯的概率图
@@ -147,9 +147,9 @@ def entrance_distance_and_presence_loss(
     arrow_distance_loss = F.relu(arrow_excess).mean()
 
     # 楼梯：使用窗口大小为 (W//2, H//2)
-    kernel_size_stairs = (max(1, W // 2), max(1, H // 2))
+    kernel_size_stairs = (9, 9)
     kernel_stairs = torch.ones((1, 1, kernel_size_stairs[0], kernel_size_stairs[1]), device=logits.device)
-    pad_stairs = (kernel_size_stairs[0] // 2, kernel_size_stairs[1] // 2)
+    pad_stairs = ((kernel_size_stairs[0] - 1) // 2, (kernel_size_stairs[1] - 1) // 2)
     local_stairs_sum = F.conv2d(stairs_probs.unsqueeze(1), kernel_stairs, padding=pad_stairs)
     stairs_excess = local_stairs_sum - stairs_probs.unsqueeze(1)
     stairs_distance_loss = F.relu(stairs_excess).mean()
@@ -283,7 +283,7 @@ def integrated_count_loss(probs, target, class_list=[0,1,2,3,4,5,6,7,8,9], toler
     return avg_loss
 
 class GinkaLoss(nn.Module):
-    def __init__(self, minamo: MinamoModel, weight=[0.35, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1, 0.1]):
+    def __init__(self, minamo: MinamoModel, converter: DynamicGraphConverter, weight=[0.35, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1, 0.1]):
         """Ginka Model 损失函数部分
 
         Args:
@@ -301,8 +301,10 @@ class GinkaLoss(nn.Module):
         self.weight = weight
         self.ce = nn.CrossEntropyLoss()
         self.minamo = minamo
+        self.tau = 1
+        self.converter = converter
         
-    def forward(self, pred, pred_softmax, target):
+    def forward(self, pred, pred_softmax, target, target_vision_feat, target_topo_feat):
         probs = F.softmax(pred, dim=1)
         # 地图结构损失
         border_loss = wall_border_loss(pred, probs)
@@ -314,21 +316,27 @@ class GinkaLoss(nn.Module):
         count_loss = integrated_count_loss(probs, target)
         
         # 使用 Minamo Model 计算相似度
+        graph = self.converter(pred, tau=self.tau)
+        pred_vision_feat, pred_topo_feat = self.minamo(pred_softmax, graph)
         
+        vision_sim = F.cosine_similarity(pred_vision_feat, target_vision_feat, dim=-1)
+        topo_sim = F.cosine_similarity(pred_topo_feat, target_topo_feat, dim=-1)
+        minamo_sim = 0.3 * vision_sim + 0.7 * topo_sim
+        minamo_loss = torch.exp(-10 * (minamo_sim - 0.8)).mean()
         
-        print(
-            # structure_loss.item(),
-            border_loss.item(),
-            wall_loss.item(),
-            entry_loss.item(),
-            entry_dis_loss.item(),
-            enemy_loss.item(),
-            valid_block_loss.item(),
-            count_loss.item()
-        )
+        # print(
+        #     minamo_loss.item(),
+        #     border_loss.item(),
+        #     wall_loss.item(),
+        #     entry_loss.item(),
+        #     entry_dis_loss.item(),
+        #     enemy_loss.item(),
+        #     valid_block_loss.item(),
+        #     count_loss.item()
+        # )
         
         return (
-            # structure_loss * self.weight[0] +
+            minamo_loss * self.weight[0] +
             border_loss * self.weight[1] +
             wall_loss * self.weight[2] +
             entry_loss * self.weight[3] +

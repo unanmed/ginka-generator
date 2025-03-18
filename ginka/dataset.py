@@ -15,10 +15,11 @@ def load_data(path: str):
     return data_list
 
 class GinkaDataset(Dataset):
-    def __init__(self, data_path: str, minamo: MinamoModel):
+    def __init__(self, data_path: str, device, minamo: MinamoModel):
         self.data = load_data(data_path)  # 自定义数据加载函数
         self.max_size = 32
         self.minamo = minamo
+        self.device = device
 
     def __len__(self):
         return len(self.data)
@@ -26,13 +27,13 @@ class GinkaDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         
-        target = torch.tensor(item["map"])
-        graph = convert_map_to_graph(target)
-        vision_feat, topo_feat = self.minamo(target, graph)
-        feat_vec = torch.cat([vision_feat, topo_feat])
+        target = torch.tensor(item["map"]).to(self.device)
+        graph = convert_map_to_graph(target).to(self.device)
+        vision_feat, topo_feat = self.minamo(target.unsqueeze(0), graph)
         
         return {
-            "feat_vec": feat_vec,
+            "target_vision_feat": vision_feat,
+            "target_topo_feat": topo_feat,
             "target": target
         }
         

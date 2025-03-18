@@ -14,8 +14,8 @@ class GumbelSoftmax(nn.Module):
         y = F.gumbel_softmax(logits, tau=self.tau, hard=self.hard)
         
         # 转换为类索引的连续表示
-        class_indices = torch.arange(y.size(1), device=y.device).view(1, -1, 1, 1)
-        return (y * class_indices).sum(dim=1)  # 形状[BS, H, W]
+        # class_indices = torch.arange(y.size(1), device=y.device).view(1, -1, 1, 1)
+        return y.argmax(dim=1)  # 形状[BS, H, W]
 
 class GinkaModel(nn.Module):
     def __init__(self, feat_dim=256, base_ch=64, num_classes=32):
