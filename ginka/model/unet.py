@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from shared.attention import CBAM
 
 class GinkaEncoder(nn.Module):
     """编码器（下采样）部分"""
@@ -8,10 +9,11 @@ class GinkaEncoder(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU()
+            # CBAM(out_channels),
+            nn.GELU()
         )
         self.pool = nn.MaxPool2d(2)
 
@@ -29,7 +31,8 @@ class GinkaDecoder(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels + out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU()
+            # CBAM(out_channels),
+            nn.GELU()
         )
     
     def forward(self, x, skip):
@@ -44,10 +47,10 @@ class GinkaBottleneck(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(),
+            nn.GELU(),
         )
 
     def forward(self, x):
@@ -60,11 +63,15 @@ class GinkaUNet(nn.Module):
         super().__init__()
         self.down1 = GinkaEncoder(in_ch, in_ch*2)
         self.down2 = GinkaEncoder(in_ch*2, in_ch*4)
+        self.down3 = GinkaEncoder(in_ch*4, in_ch*8)
+        self.down4 = GinkaEncoder(in_ch*8, in_ch*16)
 
-        self.bottleneck = GinkaBottleneck(in_ch*4, in_ch*4)
+        self.bottleneck = GinkaBottleneck(in_ch*16, in_ch*16)
 
-        self.up1 = GinkaDecoder(in_ch*4, in_ch*2)
-        self.up2 = GinkaDecoder(in_ch*2, in_ch)
+        self.up1 = GinkaDecoder(in_ch*16, in_ch*8)
+        self.up2 = GinkaDecoder(in_ch*8, in_ch*4)
+        self.up3 = GinkaDecoder(in_ch*4, in_ch*2)
+        self.up4 = GinkaDecoder(in_ch*2, in_ch)
 
         self.final = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, 1),
@@ -74,10 +81,14 @@ class GinkaUNet(nn.Module):
     def forward(self, x):
         x_down1, skip1 = self.down1(x)
         x_down2, skip2 = self.down2(x_down1)
+        x_down3, skip3 = self.down3(x_down2)
+        x_down4, skip4 = self.down4(x_down3)
 
-        x = self.bottleneck(x_down2)
+        x = self.bottleneck(x_down4)
 
-        x = self.up1(x, skip2)  # 用 down2 的 skip
-        x = self.up2(x, skip1)  # 用 down1 的 skip
+        x = self.up1(x, skip4)  # 用 down2 的 skip
+        x = self.up2(x, skip3)  # 用 down2 的 skip
+        x = self.up3(x, skip2)  # 用 down1 的 skip
+        x = self.up4(x, skip1)  # 用 down1 的 skip
         
         return self.final(x)

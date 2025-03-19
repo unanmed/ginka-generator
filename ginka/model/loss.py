@@ -322,7 +322,7 @@ class GinkaLoss(nn.Module):
         vision_sim = F.cosine_similarity(pred_vision_feat, target_vision_feat, dim=-1)
         topo_sim = F.cosine_similarity(pred_topo_feat, target_topo_feat, dim=-1)
         minamo_sim = 0.3 * vision_sim + 0.7 * topo_sim
-        minamo_loss = torch.exp(-10 * (minamo_sim - 0.8)).mean()
+        minamo_loss = torch.exp(-1 * (minamo_sim - 0.8)).mean()
         
         # print(
         #     minamo_loss.item(),

@@ -14,7 +14,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/ginka_checkpoint", exist_ok=True)
 
-epochs = 70
+epochs = 150
 
 def update_tau(epoch):
     start_tau = 1.0
@@ -27,8 +27,12 @@ def train():
     model = GinkaModel()
     model.to(device)
     minamo = MinamoModel(32)
+    minamo.load_state_dict(torch.load("result/minamo.pth", map_location=device)["model_state"])
     minamo.to(device)
     minamo.eval()
+    
+    for param in minamo.parameters():
+        param.requires_grad = False
     
     converter = DynamicGraphConverter().to(device)
 
@@ -79,6 +83,18 @@ def train():
         avg_loss = total_loss / len(dataloader)
         tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch} | loss: {avg_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
         
+        # total_norm = 0
+        # for p in model.parameters():
+        #     if p.grad is not None:
+        #         param_norm = p.grad.detach().data.norm(2)
+        #         total_norm += param_norm.item() ** 2
+        # total_norm = total_norm ** 0.5
+        # tqdm.write(f"Gradient Norm: {total_norm:.4f}")  # 正常应保持在1~100之间
+        
+        # for name, param in model.named_parameters():
+        #     if param.grad is not None:
+        #         print(f"{name}: grad_mean={param.grad.abs().mean():.3e}, max={param.grad.abs().max():.3e}")
+        
         # 学习率调整
         scheduler.step()
         
@@ -95,6 +111,7 @@ def train():
                     
                     # 前向传播
                     output, output_softmax = model(feat_vec)
+                    print(output_softmax[0])
                     
                     # 计算损失
                     loss = criterion(output, output_softmax, target, target_vision_feat, target_topo_feat)
