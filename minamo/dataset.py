@@ -1,7 +1,8 @@
 import json
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
-from shared.graph import convert_map_to_graph
+from shared.graph import convert_soft_map_to_graph
 
 def load_data(path: str):
     with open(path, 'r', encoding="utf-8") as f:
@@ -22,11 +23,18 @@ class MinamoDataset(Dataset):
     
     def __getitem__(self, idx):
         item = self.data[idx]
+        
+        map1_probs = F.one_hot(torch.LongTensor(item['map1']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+        map2_probs = F.one_hot(torch.LongTensor(item['map2']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+        
+        graph1 = convert_soft_map_to_graph(map1_probs)
+        graph2 = convert_soft_map_to_graph(map2_probs)
+        
         return (
-            torch.LongTensor(item['map1']),
-            torch.LongTensor(item['map2']),
+            map1_probs,
+            map2_probs,
             torch.FloatTensor([item['visionSimilarity']]),
             torch.FloatTensor([item['topoSimilarity']]),
-            convert_map_to_graph(item['map1']),
-            convert_map_to_graph(item['map2'])
+            graph1,
+            graph2
         )

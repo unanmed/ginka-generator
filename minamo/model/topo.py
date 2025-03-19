@@ -9,8 +9,8 @@ class MinamoTopoModel(nn.Module):
         self, tile_types=32, emb_dim=64, hidden_dim=64, out_dim=512, mlp_dim=128
     ):
         super().__init__()
-        # 嵌入层
-        self.embedding = torch.nn.Embedding(tile_types, emb_dim)
+        # 传入 softmax 概率值，直接映射
+        self.input_proj = torch.nn.Linear(tile_types, emb_dim)
         # 图卷积层
         self.conv1 = GATConv(emb_dim, hidden_dim*2, heads=8, dropout=0.2)
         self.conv2 = GATConv(hidden_dim*16, hidden_dim*4, heads=4)
@@ -31,7 +31,7 @@ class MinamoTopoModel(nn.Module):
         )
         
     def forward(self, graph: Data):
-        x = self.embedding(graph.x)
+        x = self.input_proj(graph.x)
         # identity = x
         
         x = self.conv1(x, graph.edge_index)
