@@ -122,8 +122,8 @@ def train():
                     graph1 = graph1.to(device)
                     graph2 = graph2.to(device)
                     
-                    vision_feat1, topo_feat1 = model(map1, graph1)
-                    vision_feat2, topo_feat2 = model(map2, graph2)
+                    vision_feat1, topo_feat1 = model(map1_val, graph1)
+                    vision_feat2, topo_feat2 = model(map2_val, graph2)
             
                     vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, -1).unsqueeze(-1)
                     topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, -1).unsqueeze(-1)
