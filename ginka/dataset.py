@@ -1,8 +1,9 @@
 import json
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 from minamo.model.model import MinamoModel
-from shared.graph import convert_map_to_graph
+from shared.graph import convert_soft_map_to_graph
 
 def load_data(path: str):
     with open(path, 'r', encoding="utf-8") as f:
@@ -27,8 +28,8 @@ class GinkaDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         
-        target = torch.tensor(item["map"]).to(self.device)
-        graph = convert_map_to_graph(target).to(self.device)
+        target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float().to(self.device)  # [32, H, W]
+        graph = convert_soft_map_to_graph(target).to(self.device)
         vision_feat, topo_feat = self.minamo(target.unsqueeze(0), graph)
         
         return {

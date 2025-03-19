@@ -8,7 +8,6 @@ from .model.model import GinkaModel
 from .model.loss import GinkaLoss
 from .dataset import GinkaDataset
 from minamo.model.model import MinamoModel
-from shared.graph import DynamicGraphConverter
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
@@ -22,6 +21,10 @@ def update_tau(epoch):
     decay_rate = 0.95
     return max(min_tau, start_tau * (decay_rate ** epoch))
 
+# 在生成器输出后添加梯度检查钩子
+def grad_hook(module, grad_input, grad_output):
+    print(f"Generator output grad norm: {grad_output[0].norm().item()}")
+
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
     model = GinkaModel()
@@ -31,10 +34,8 @@ def train():
     minamo.to(device)
     minamo.eval()
     
-    for param in minamo.parameters():
-        param.requires_grad = False
-    
-    converter = DynamicGraphConverter().to(device)
+    # for param in minamo.parameters():
+    #     param.requires_grad = False
 
     # 准备数据集
     dataset = GinkaDataset("ginka-dataset.json", device, minamo)
@@ -53,14 +54,16 @@ def train():
     # 设定优化器与调度器
     optimizer = optim.AdamW(model.parameters(), lr=3e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
-    criterion = GinkaLoss(minamo, converter)
+    criterion = GinkaLoss(minamo, weight=[1, 0, 0, 0, 0, 0, 0, 0])
+    
+    model.register_full_backward_hook(grad_hook)
+    # converter.register_full_backward_hook(grad_hook)
+    criterion.register_full_backward_hook(grad_hook)
     
     # 开始训练
     for epoch in tqdm(range(epochs)):
         model.train()
         total_loss = 0
-        model.softmax.tau = update_tau(epoch)
-        criterion.tau = update_tau(epoch)
         
         for batch in dataloader:
             # 数据迁移到设备
@@ -81,7 +84,7 @@ def train():
             total_loss += loss.item()
             
         avg_loss = total_loss / len(dataloader)
-        tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch} | loss: {avg_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
+        tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {avg_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
         
         # total_norm = 0
         # for p in model.parameters():

@@ -3,9 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from minamo.model.model import MinamoModel
-from shared.graph import DynamicGraphConverter
+from shared.graph import convert_soft_map_to_graph
 
-def wall_border_loss(pred: torch.Tensor, probs: torch.Tensor, allow_border=[1, 11]):
+def wall_border_loss(pred: torch.Tensor, allow_border=[1, 11]):
     """地图最外层是否为墙"""
     # 计算 softmax 概率
     B, C, H, W = pred.shape
@@ -18,7 +18,7 @@ def wall_border_loss(pred: torch.Tensor, probs: torch.Tensor, allow_border=[1, 1
     border_mask[:, -1] = True
 
     # 对允许的类别求概率和（即该像素为允许类别的总概率）
-    allowed_prob = probs[:, allow_border, :, :].sum(dim=1)  # [B, H, W]
+    allowed_prob = pred[:, allow_border, :, :].sum(dim=1)  # [B, H, W]
 
     # 只计算边界区域的损失：对于边界上的每个像素，要求 allowed_prob 越高越好
     border_allowed_prob = allowed_prob[:, border_mask]  # [B, N_border_pixels]
@@ -28,13 +28,13 @@ def wall_border_loss(pred: torch.Tensor, probs: torch.Tensor, allow_border=[1, 1
 
     return loss
 
-def internal_wall_loss(logits, probs, wall_class=1, threshold=2.5):
+def internal_wall_loss(pred, wall_class=1, threshold=2.5):
     """
     针对内部区域（排除最外圈）设计的损失函数：
     当内部任意 2×2 区域的 wall 类别概率之和超过阈值时，施加惩罚。
 
     参数:
-        logits: 模型输出，形状 [B, C, H, W]
+        pred: 模型输出，形状 [B, C, H, W]
         wall_class: 对应墙壁的类别索引（这里假设墙壁数字为1）
         threshold: 2×2 区域概率之和的阈值，超过此值时施加惩罚。可根据实际情况调节。
     
@@ -42,13 +42,13 @@ def internal_wall_loss(logits, probs, wall_class=1, threshold=2.5):
         loss: 内部墙壁连续区域的平均惩罚损失
     """    
     # 取出对应墙壁类别的概率图 [B, H, W]
-    wall_probs = probs[:, wall_class, :, :]
+    wall_probs = pred[:, wall_class, :, :]
     
     # 排除最外圈，取内部区域 (H, W 均减去2)
     interior = wall_probs[:, 1:-1, 1:-1]  # [B, H-2, W-2]
     
     # 构造一个 2×2 的卷积核，全为 1，用于检测局部连续墙壁的概率之和
-    kernel = torch.ones((1, 1, 2, 2), device=logits.device)
+    kernel = torch.ones((1, 1, 2, 2), device=pred.device)
     
     # 对内部区域进行卷积操作，计算每个 2×2 区域内的概率和
     # 需要将 interior 扩展一个通道维度
@@ -63,14 +63,14 @@ def internal_wall_loss(logits, probs, wall_class=1, threshold=2.5):
     loss = penalty.mean()
     return loss
 
-def entrance_loss(logits, probs, stairs_class=10, arrow_class=11):
+def entrance_loss(pred, stairs_class=10, arrow_class=11):
     """
     针对地图生成的额外约束损失：
     - 保证最外圈不出现楼梯类型入口（数字10）
     - 保证内部区域不出现箭头类型入口（数字11）
     
     参数:
-        logits: 模型输出，形状 [B, C, H, W]
+        pred: 模型输出，形状 [B, C, H, W]
         stairs_class: 楼梯入口对应的类别（数字10）
         arrow_class: 箭头入口对应的类别（数字11）
     
@@ -78,10 +78,10 @@ def entrance_loss(logits, probs, stairs_class=10, arrow_class=11):
         loss: 针对入口出现的惩罚损失
     """
     # 先将 logits 转为概率分布
-    B, C, H, W = logits.shape
+    B, C, H, W = pred.shape
 
     # 构造最外圈 mask：外圈为 True，其余为 False
-    outer_mask = torch.zeros((H, W), dtype=torch.bool, device=logits.device)
+    outer_mask = torch.zeros((H, W), dtype=torch.bool, device=pred.device)
     outer_mask[0, :] = True
     outer_mask[-1, :] = True
     outer_mask[:, 0] = True
@@ -91,8 +91,8 @@ def entrance_loss(logits, probs, stairs_class=10, arrow_class=11):
     interior_mask = ~outer_mask  # 取反
 
     # 提取对应类别的概率图
-    stairs_probs = probs[:, stairs_class, :, :]  # 楼梯概率 [B, H, W]
-    arrow_probs = probs[:, arrow_class, :, :]    # 箭头概率 [B, H, W]
+    stairs_probs = pred[:, stairs_class, :, :]  # 楼梯概率 [B, H, W]
+    arrow_probs = pred[:, arrow_class, :, :]    # 箭头概率 [B, H, W]
 
     # 从最外圈提取楼梯概率；用 mask 索引时：张量[:, mask] 会将每个样本的外圈像素展平
     outer_stairs = stairs_probs[:, outer_mask]  # [B, num_outer_pixels]
@@ -107,7 +107,7 @@ def entrance_loss(logits, probs, stairs_class=10, arrow_class=11):
     return total_loss
 
 def entrance_distance_and_presence_loss(
-    logits, probs,
+    pred,
     arrow_class=11, stairs_class=10, 
     arrow_min_threshold=0.5, stairs_min_threshold=0.5,
     lambda_arrow_presence=1.0, lambda_stairs_presence=1.0
@@ -121,7 +121,7 @@ def entrance_distance_and_presence_loss(
     楼梯入口要求在一个窗口（地图尺寸一半）内只出现一个楼梯入口。
     
     参数:
-        logits: 模型输出, shape [B, C, H, W]
+        pred: 模型输出, shape [B, C, H, W]
         arrow_class: 箭头入口类别（默认 11）
         stairs_class: 楼梯入口类别（默认 10）
         arrow_min_threshold: 箭头入口全局最小平均概率要求（可根据任务调节）
@@ -132,15 +132,15 @@ def entrance_distance_and_presence_loss(
         total_loss: 综合入口距离与存在性损失
     """
     # 将 logits 转换为概率分布
-    B, C, H, W = logits.shape
+    B, C, H, W = pred.shape
 
     # 提取箭头和楼梯的概率图
-    arrow_probs = probs[:, arrow_class, :, :]   # [B, H, W]
-    stairs_probs = probs[:, stairs_class, :, :]   # [B, H, W]
+    arrow_probs = pred[:, arrow_class, :, :]   # [B, H, W]
+    stairs_probs = pred[:, stairs_class, :, :]   # [B, H, W]
 
     #### 局部距离约束 ####
     # 箭头：构造 9x9 卷积核，半径 4
-    kernel_arrow = torch.ones((1, 1, 9, 9), device=logits.device)
+    kernel_arrow = torch.ones((1, 1, 9, 9), device=pred.device)
     local_arrow_sum = F.conv2d(arrow_probs.unsqueeze(1), kernel_arrow, padding=4)
     # 减去自身概率，计算多余的局部累积
     arrow_excess = local_arrow_sum - arrow_probs.unsqueeze(1)
@@ -148,7 +148,7 @@ def entrance_distance_and_presence_loss(
 
     # 楼梯：使用窗口大小为 (W//2, H//2)
     kernel_size_stairs = (9, 9)
-    kernel_stairs = torch.ones((1, 1, kernel_size_stairs[0], kernel_size_stairs[1]), device=logits.device)
+    kernel_stairs = torch.ones((1, 1, kernel_size_stairs[0], kernel_size_stairs[1]), device=pred.device)
     pad_stairs = ((kernel_size_stairs[0] - 1) // 2, (kernel_size_stairs[1] - 1) // 2)
     local_stairs_sum = F.conv2d(stairs_probs.unsqueeze(1), kernel_stairs, padding=pad_stairs)
     stairs_excess = local_stairs_sum - stairs_probs.unsqueeze(1)
@@ -175,12 +175,12 @@ def entrance_distance_and_presence_loss(
                  + min(ap_weighted, sp_weighted)
     return total_loss
 
-def monster_consecutive_loss(logits, probs, monster_classes=[7,8,9], threshold=2.9):
+def monster_consecutive_loss(pred, monster_classes=[7,8,9], threshold=2.9):
     """
     检查横向和纵向是否存在连续超过三个的怪物（类别 7,8,9）。
     
     参数:
-      logits: 模型输出，形状 [B, C, H, W]
+      pred: 模型输出，形状 [B, C, H, W]
       monster_classes: 待检测的怪物类别列表
       threshold: 滑动窗口内概率和的阈值，若超过则施加惩罚
                  （对于连续三个像素，如果每个像素概率接近 1，则窗口和接近 3）
@@ -189,23 +189,23 @@ def monster_consecutive_loss(logits, probs, monster_classes=[7,8,9], threshold=2
       loss: 惩罚损失（数值越高表示连续怪物区域越严重）
     """
     # 将 logits 转换为概率分布
-    B, C, H, W = logits.shape
+    B, C, H, W = pred.shape
     
     # 得到怪物整体概率图：将类别 7,8,9 的概率相加
-    monster_probs = probs[:, monster_classes, :].sum(dim=1)  # [B, H, W]
+    monster_probs = pred[:, monster_classes, :].sum(dim=1)  # [B, H, W]
     
     # 注意：monster_probs 越高说明该像素更有可能是怪物
     
     # --- 横向检测 ---
     # 构造一个 (1,3) 的卷积核，全 1
-    kernel_horiz = torch.ones((1, 1, 1, 3), device=logits.device)
+    kernel_horiz = torch.ones((1, 1, 1, 3), device=pred.device)
     # 对 monster_probs 加一个 channel 维度，使形状为 [B, 1, H, W]
     conv_horiz = F.conv2d(monster_probs.unsqueeze(1), kernel_horiz, padding=(0,1))
     # conv_horiz 的每个值表示相邻三个像素的怪物概率和
     
     # --- 纵向检测 ---
     # 构造一个 (3,1) 的卷积核，全 1
-    kernel_vert = torch.ones((1, 1, 3, 1), device=logits.device)
+    kernel_vert = torch.ones((1, 1, 3, 1), device=pred.device)
     conv_vert = F.conv2d(monster_probs.unsqueeze(1), kernel_vert, padding=(1,0))
     # conv_vert 的每个值表示垂直连续三个像素的怪物概率和
     
@@ -217,31 +217,32 @@ def monster_consecutive_loss(logits, probs, monster_classes=[7,8,9], threshold=2
     loss = penalty_horiz.mean() + penalty_vert.mean()
     return loss
 
-def illegal_block_loss(logits ,probs, used_classes=12, mode='mean'):
+def illegal_block_loss(pred, used_classes=12, mode='mean'):
     """
     对未使用类别（例如 12 ~ 31）的预测概率施加惩罚，
     鼓励模型输出仅集中在 0 ~ 11 上。
     
     参数:
-      logits: 模型输出，形状 [B, num_classes, H, W]
+      pred: 模型输出，形状 [B, num_classes, H, W]
       used_classes: 已经使用的类别数（例如 12 表示只使用 0-11）
       mode: 'mean' 使用平均概率，或 'mse' 使用均方误差
     
     返回:
       penalty: 标量惩罚损失
     """
+    B, C, H, W = pred.shape
     # 选取非法类别的概率（注意：这一步会得到非法图块在每个像素上的概率）
-    illegal_probs = probs[:, range(used_classes, 32), :, :]  # [B, len(illegal_classes), H, W]
+    illegal_probs = pred[:, range(used_classes, 32), :, :]  # [B, len(illegal_classes), H, W]
     
     # 我们可以将非法图块的概率在类别维度上求和，得到每个像素的非法激活值
     illegal_activation = illegal_probs.sum(dim=1)  # [B, H, W]
     
     # 接下来我们计算整个图上非法激活的“数量”
     # 例如，可以直接对整个 batch 内非法激活求和
-    total_illegal = illegal_activation.sum()  # 标量
+    total_illegal = illegal_activation.sum() / B  # 标量
     
     # 计算损失值：使用负指数函数。注意如果非法激活很小，总损失接近 exp(0)=1
-    loss = torch.sqrt(total_illegal)
+    loss = torch.sqrt(total_illegal).mean()
     return loss
 
 def integrated_count_loss(probs, target, class_list=[0,1,2,3,4,5,6,7,8,9], tolerance=0.5):
@@ -283,7 +284,7 @@ def integrated_count_loss(probs, target, class_list=[0,1,2,3,4,5,6,7,8,9], toler
     return avg_loss
 
 class GinkaLoss(nn.Module):
-    def __init__(self, minamo: MinamoModel, converter: DynamicGraphConverter, weight=[0.35, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1, 0.1]):
+    def __init__(self, minamo: MinamoModel, weight=[0.35, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1, 0.1]):
         """Ginka Model 损失函数部分
 
         Args:
@@ -299,41 +300,37 @@ class GinkaLoss(nn.Module):
         """
         super().__init__()
         self.weight = weight
-        self.ce = nn.CrossEntropyLoss()
         self.minamo = minamo
-        self.tau = 1
-        self.converter = converter
         
-    def forward(self, pred, pred_softmax, target, target_vision_feat, target_topo_feat):
-        probs = F.softmax(pred, dim=1)
+    def forward(self, pred, target, target_vision_feat, target_topo_feat):
         # 地图结构损失
-        border_loss = wall_border_loss(pred, probs)
-        wall_loss = internal_wall_loss(pred, probs)
-        entry_loss = entrance_loss(pred, probs)
-        entry_dis_loss = entrance_distance_and_presence_loss(pred, probs)
-        enemy_loss = monster_consecutive_loss(pred, probs)
-        valid_block_loss = illegal_block_loss(pred, probs, used_classes=12, mode="mean")
-        count_loss = integrated_count_loss(probs, target)
+        border_loss = wall_border_loss(pred)
+        wall_loss = internal_wall_loss(pred)
+        entry_loss = entrance_loss(pred)
+        entry_dis_loss = entrance_distance_and_presence_loss(pred, )
+        enemy_loss = monster_consecutive_loss(pred)
+        valid_block_loss = illegal_block_loss(pred, used_classes=12, mode="mean")
+        count_loss = integrated_count_loss(pred, target)
         
         # 使用 Minamo Model 计算相似度
-        graph = self.converter(pred, tau=self.tau)
-        pred_vision_feat, pred_topo_feat = self.minamo(pred_softmax, graph)
+        graph = convert_soft_map_to_graph(pred)
+        pred_vision_feat, pred_topo_feat = self.minamo(pred, graph)
         
         vision_sim = F.cosine_similarity(pred_vision_feat, target_vision_feat, dim=-1)
         topo_sim = F.cosine_similarity(pred_topo_feat, target_topo_feat, dim=-1)
         minamo_sim = 0.3 * vision_sim + 0.7 * topo_sim
         minamo_loss = torch.exp(-1 * (minamo_sim - 0.8)).mean()
         
-        # print(
-        #     minamo_loss.item(),
-        #     border_loss.item(),
-        #     wall_loss.item(),
-        #     entry_loss.item(),
-        #     entry_dis_loss.item(),
-        #     enemy_loss.item(),
-        #     valid_block_loss.item(),
-        #     count_loss.item()
-        # )
+        print(
+            minamo_loss.item(),
+            border_loss.item(),
+            wall_loss.item(),
+            entry_loss.item(),
+            entry_dis_loss.item(),
+            enemy_loss.item(),
+            valid_block_loss.item(),
+            count_loss.item()
+        )
         
         return (
             minamo_loss * self.weight[0] +
