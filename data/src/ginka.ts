@@ -1,5 +1,6 @@
 import { writeFile } from 'fs-extra';
 import { FloorData, getAllFloors, parseTowerInfo } from './utils';
+import { Presets, SingleBar } from 'cli-progress';
 
 interface GinkaConfig {
     clip: {
@@ -25,6 +26,10 @@ const [output, ...list] = process.argv.slice(2);
 function parseAllData(data: Map<string, FloorData>) {
     const resolved: Record<string, GinkaTrainData> = {};
 
+    const progress = new SingleBar({}, Presets.shades_classic);
+    progress.start(data.size, 0);
+    let i = 0;
+
     data.forEach((floor, key) => {
         const config = floor.config as GinkaConfig;
         const text = config.data[floor.id] ?? [];
@@ -33,6 +38,8 @@ function parseAllData(data: Map<string, FloorData>) {
             size: [floor.map[0].length, floor.map.length],
             text: text
         };
+        i++;
+        progress.update(i);
     });
 
     const dataset: GinkaDataset = {
