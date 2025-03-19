@@ -90,7 +90,7 @@ function convertApeiriaEnemy(
     for (let ny = 0; ny < height; ny++) {
         for (let nx = 0; nx < width; nx++) {
             const tile = map[ny][nx];
-            if (tile > 200 && tile <= 280) {
+            if (tile > 200 && tile <= 280 && tile !== 224) {
                 // 这些是怪物
                 if (enemyMap[tile]) enemy.add(enemyMap[tile]);
             }
@@ -103,7 +103,7 @@ function convertApeiriaEnemy(
     for (let ny = 0; ny < height; ny++) {
         for (let nx = 0; nx < width; nx++) {
             const tile = map[ny][nx];
-            if (tile > 200 && tile <= 280) {
+            if (tile > 200 && tile <= 280 && tile !== 224) {
                 // 这些是怪物
                 if (enemyMap[tile]) {
                     // 替换为弱怪/中怪/强怪

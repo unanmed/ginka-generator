@@ -10,6 +10,7 @@ interface DatasetMergable<T> {
 
 export interface FloorData {
     map: number[][];
+    id: string;
     config: BaseConfig;
 }
 
@@ -126,7 +127,11 @@ export async function getAllFloors(...info: TowerInfo[]) {
         const name = info[tid].name;
         tower.forEach((map, mid) => {
             const floorId = info[tid].floorIds[mid];
-            maps.set(`${name}::${floorId}`, { map, config: info[tid].config });
+            maps.set(`${name}::${floorId}`, {
+                map,
+                id: floorId,
+                config: info[tid].config
+            });
         });
     });
     return maps;
