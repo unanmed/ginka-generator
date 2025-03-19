@@ -15,12 +15,6 @@ os.makedirs("result/ginka_checkpoint", exist_ok=True)
 
 epochs = 150
 
-def update_tau(epoch):
-    start_tau = 1.0
-    min_tau = 0.1
-    decay_rate = 0.95
-    return max(min_tau, start_tau * (decay_rate ** epoch))
-
 # 在生成器输出后添加梯度检查钩子
 def grad_hook(module, grad_input, grad_output):
     print(f"Generator output grad norm: {grad_output[0].norm().item()}")
@@ -73,10 +67,10 @@ def train():
             feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
             # 前向传播
             optimizer.zero_grad()
-            output, output_softmax = model(feat_vec)
+            output = model(feat_vec)
             
             # 计算损失
-            loss = criterion(output, output_softmax, target, target_vision_feat, target_topo_feat)
+            loss = criterion(output, target, target_vision_feat, target_topo_feat)
             
             # 反向传播
             loss.backward()
@@ -113,11 +107,11 @@ def train():
                     feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
                     
                     # 前向传播
-                    output, output_softmax = model(feat_vec)
-                    print(output_softmax[0])
+                    output = model(feat_vec)
+                    print(torch.argmax(output, dim=1)[0])
                     
                     # 计算损失
-                    loss = criterion(output, output_softmax, target, target_vision_feat, target_topo_feat)
+                    loss = criterion(output, target, target_vision_feat, target_topo_feat)
                     loss_val += loss.item()
             
             avg_val_loss = loss_val / len(dataloader_val)
@@ -136,5 +130,5 @@ def train():
     }, f"result/ginka.pth")
 
 if __name__ == "__main__":
-    torch.set_num_threads(8)
+    torch.set_num_threads(4)
     train()

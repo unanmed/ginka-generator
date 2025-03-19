@@ -6,7 +6,6 @@ from minamo.model.model import MinamoModel
 from .dataset import GinkaDataset
 from .model.loss import GinkaLoss
 from .model.model import GinkaModel
-from shared.graph import DynamicGraphConverter
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -26,10 +25,10 @@ def validate():
         shuffle=True
     )
     
-    converter = DynamicGraphConverter().to(device)
-    criterion = GinkaLoss(minamo, converter)
+    criterion = GinkaLoss(minamo)
     
     minamo.eval()
+    model.eval()
     val_loss = 0
     with torch.no_grad():
          for batch in val_loader:
@@ -43,7 +42,7 @@ def validate():
             map_matrix = torch.argmax(output, dim=1)
             
             # 计算损失
-            loss = criterion(output, map_matrix, target, target_vision_feat, target_topo_feat)
+            loss = criterion(output, target, target_vision_feat, target_topo_feat)
             total_loss += loss.item()
             
     avg_val_loss = val_loss / len(val_loader)

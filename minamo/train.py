@@ -129,7 +129,7 @@ def train():
                     topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, -1).unsqueeze(-1)
                     
                     # 计算损失
-                    loss_val = criterion(vision_pred, topo_pred, vision_simi, topo_simi)
+                    loss_val = criterion(vision_pred, topo_pred, vision_simi_val, topo_simi_val)
                     val_loss += loss_val.item()
                     
             avg_val_loss = val_loss / len(val_loader)
