@@ -332,7 +332,6 @@ function generateAssignedData(
     const keys1 = [...data1.keys()];
     const keys2 = [...data2.keys()];
     const choose1 = chooseFrom(keys1, count1);
-    const choose2 = chooseFrom(keys2, count2);
 
     const trainData: Record<string, MinamoTrainData> = {};
 
@@ -347,6 +346,7 @@ function generateAssignedData(
     let n = 0;
 
     for (const key1 of choose1) {
+        const choose2 = chooseFrom(keys2, count2);
         for (const key2 of choose2) {
             const { map: map1 } = data1.get(key1)!;
             const { map: map2 } = data2.get(key2)!;
