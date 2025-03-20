@@ -144,3 +144,34 @@ export function mergeFloorIds(...info: TowerInfo[]) {
     });
     return ids;
 }
+
+export async function readOne(path: string) {
+    if (path.endsWith('.json')) {
+        return fromJSON(path);
+    } else {
+        return getAllFloors(await parseTowerInfo(path, 'minamo-config.json'));
+    }
+}
+
+export async function fromJSON(path: string) {
+    const file = await readFile(path, 'utf-8');
+    const data = JSON.parse(file) as Record<string, number[][]>;
+    const clip: Record<string, [number, number, number, number]> = {};
+    const config: BaseConfig = {
+        clip: {
+            defaults: [0, 0, 0, 0],
+            special: clip
+        }
+    };
+    const name = (Math.random() * 12).toFixed(0);
+    const floorMap = new Map<string, FloorData>();
+    for (const [key, value] of Object.entries(data)) {
+        const floorData: FloorData = {
+            map: value,
+            id: key,
+            config
+        };
+        floorMap.set(`${name}:${key}`, floorData);
+    }
+    return floorMap;
+}
