@@ -46,13 +46,13 @@ def train():
     )
     
     # 设定优化器与调度器
-    optimizer = optim.AdamW(model.parameters(), lr=3e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
-    criterion = GinkaLoss(minamo, weight=[1, 0, 0, 0, 0, 0, 0, 0])
+    criterion = GinkaLoss(minamo)
     
-    model.register_full_backward_hook(grad_hook)
+    # model.register_full_backward_hook(grad_hook)
     # converter.register_full_backward_hook(grad_hook)
-    criterion.register_full_backward_hook(grad_hook)
+    # criterion.register_full_backward_hook(grad_hook)
     
     # 开始训练
     for epoch in tqdm(range(epochs)):

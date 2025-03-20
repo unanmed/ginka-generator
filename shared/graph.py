@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import Data
+from torch_geometric.data import Data, Batch
 
 def convert_soft_map_to_graph(map_probs: torch.Tensor):
     """
@@ -31,3 +31,17 @@ def convert_soft_map_to_graph(map_probs: torch.Tensor):
                         map_probs[:, edge_index[1] // W, edge_index[1] % W]) / 2
 
     return Data(x=node_features, edge_index=edge_index, edge_attr=soft_edge_weight)
+
+def batch_convert_soft_map_to_graph(batch_map_probs):
+    """
+    处理 batch 维度，将 [B, C, H, W] 转换为批量图结构 Batch
+    """
+    B, C, H, W = batch_map_probs.shape  # 获取 batch 维度
+    batch_graphs = []
+
+    for i in range(B):
+        graph = convert_soft_map_to_graph(batch_map_probs[i])  # 处理单个样本
+        batch_graphs.append(graph)
+
+    # 合并所有图为批量 Batch
+    return Batch.from_data_list(batch_graphs)
