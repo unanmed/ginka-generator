@@ -8,12 +8,11 @@ from tqdm import tqdm
 from .model.model import MinamoModel
 from .model.loss import MinamoLoss
 from .dataset import MinamoDataset
+from shared.args import parse_arguments
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/minamo_checkpoint", exist_ok=True)
-
-epochs = 150
 
 def collate_fn(batch):
     """动态处理不同尺寸地图的批处理"""
@@ -35,6 +34,9 @@ def collate_fn(batch):
 
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
+    
+    args = parse_arguments("result/minamo.pth", "minamo-dataset.json", 'minamo-eval.json')
+    
     model = MinamoModel(32)
     model.to(device)
 
@@ -57,8 +59,15 @@ def train():
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     criterion = MinamoLoss()
     
+    if args.resume:
+        data = torch.load(args.from_state, map_location=device)
+        model.load_state_dict(data["model_state"])
+        if args.load_optim:
+            optimizer.load_state_dict(data["optimizer_state"])
+        print("Train from loaded state.")
+    
     # 开始训练
-    for epoch in tqdm(range(epochs)):
+    for epoch in tqdm(range(args.epochs)):
         model.train()
         total_loss = 0
         

@@ -8,12 +8,11 @@ from .model.model import GinkaModel
 from .model.loss import GinkaLoss
 from .dataset import GinkaDataset
 from minamo.model.model import MinamoModel
+from shared.args import parse_arguments
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/ginka_checkpoint", exist_ok=True)
-
-epochs = 150
 
 # 在生成器输出后添加梯度检查钩子
 def grad_hook(module, grad_input, grad_output):
@@ -21,6 +20,9 @@ def grad_hook(module, grad_input, grad_output):
 
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
+    
+    args = parse_arguments("result/ginka.pth", "ginka-dataset.json", 'ginka-eval.json')
+    
     model = GinkaModel()
     model.to(device)
     minamo = MinamoModel(32)
@@ -53,9 +55,15 @@ def train():
     # model.register_full_backward_hook(grad_hook)
     # converter.register_full_backward_hook(grad_hook)
     # criterion.register_full_backward_hook(grad_hook)
+    if args.resume:
+        data = torch.load(args.from_state, map_location=device)
+        model.load_state_dict(data["model_state"])
+        if args.load_optim:
+            optimizer.load_state_dict(data["optimizer_state"])
+        print("Train from loaded state.")
     
     # 开始训练
-    for epoch in tqdm(range(epochs)):
+    for epoch in tqdm(range(args.epochs)):
         model.train()
         total_loss = 0
         
@@ -118,7 +126,7 @@ def train():
             tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation::loss: {avg_val_loss:.6f}")
             torch.save({
                 "model_state": model.state_dict(),
-                "optimizer_state": optimizer.state_dict(),
+                # "optimizer_state": optimizer.state_dict(),
             }, f"result/ginka_checkpoint/{epoch + 1}.pth")
                 
         
@@ -126,7 +134,7 @@ def train():
     
     torch.save({
         "model_state": model.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
+        # "optimizer_state": optimizer.state_dict(),
     }, f"result/ginka.pth")
 
 if __name__ == "__main__":
