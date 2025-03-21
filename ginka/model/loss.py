@@ -335,13 +335,13 @@ class GinkaLoss(nn.Module):
         
         losses = [
             minamo_loss * self.weight[0],
-            border_loss * self.weight[1] * 0.1,
+            border_loss * self.weight[1],
             entrance_loss * self.weight[2],
             count_loss * self.weight[3],
             illegal_loss * self.weight[4]
         ]
     
         # 梯度归一化
-        scaled_losses = [loss / (loss.detach() + 1e-6) for loss in losses]
-        total_loss = sum(scaled_losses)
+        # scaled_losses = [loss / (loss.detach() + 1e-6) for loss in losses]
+        total_loss = sum(losses)
         return total_loss
