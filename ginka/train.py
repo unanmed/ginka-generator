@@ -34,8 +34,8 @@ def train():
     #     param.requires_grad = False
 
     # 准备数据集
-    dataset = GinkaDataset("ginka-dataset.json", device, minamo)
-    dataset_val = GinkaDataset("ginka-eval.json", device, minamo)
+    dataset = GinkaDataset(args.train, device, minamo)
+    dataset_val = GinkaDataset(args.validate, device, minamo)
     dataloader = DataLoader(
         dataset,
         batch_size=32,

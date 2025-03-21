@@ -41,8 +41,8 @@ def train():
     model.to(device)
 
     # 准备数据集
-    dataset = MinamoDataset("minamo-dataset.json")
-    val_dataset = MinamoDataset("minamo-eval.json")
+    dataset = MinamoDataset(args.train)
+    val_dataset = MinamoDataset(args.validate)
     dataloader = DataLoader(
         dataset,
         batch_size=64,
