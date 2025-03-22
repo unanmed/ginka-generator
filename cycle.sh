@@ -9,7 +9,7 @@ mv "minamo-dataset.json" "datasets/minamo-dataset-$1.json"
 mv "minamo-eval.json" "datasets/minamo-eval-$1.json"
 cd data
 pnpm minamo "../minamo-dataset.json" "../result/ginka_val.json" "../../Apeiria/project" assigned
-pnpm minamo "../minamo-dataset.json" "../result/ginka_val.json" "../../Apeiria-eval/project" assigned:100:10
+pnpm minamo "../minamo-eval.json" "../result/ginka_val.json" "../../Apeiria-eval/project" assigned:100:10
 pnpm merge "../datasets/minamo-dataset-merged.json" "../datasets/minamo-dataset-merged.json" "../datasets/minamo-dataset-$1.json"
 pnpm merge "../datasets/minamo-eval-merged.json" "../datasets/minamo-eval-merged.json" "../datasets/minamo-eval-$1.json"
 cd ..
