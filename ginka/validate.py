@@ -42,13 +42,13 @@ def matrix_to_image_cv(map_matrix, tile_set, tile_size=32):
 
             if tile_index == '11':
                 if row == 0:
-                    tile_index = '11_2'
-                elif row == W - 1:
-                    tile_index = '11_4'
-                elif col == 0:
                     tile_index = '11_1'
-                elif col == H - 1:
+                elif row == W - 1:
                     tile_index = '11_3'
+                elif col == 0:
+                    tile_index = '11_2'
+                elif col == H - 1:
+                    tile_index = '11_4'
 
             # 叠加其他透明图块
             if tile_index in tile_set and tile_index != 0:
