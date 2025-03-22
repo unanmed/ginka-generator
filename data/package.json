@@ -6,6 +6,7 @@
     "scripts": {
         "ginka": "tsx ./src/ginka.ts",
         "minamo": "tsx ./src/minamo.ts",
+        "merge": "tsx ./src/merge.ts",
         "test:topo": "tsx ./src/topology/test.ts",
         "test:vision": "tsx ./src/vision/test.ts"
     },

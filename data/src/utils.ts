@@ -3,7 +3,7 @@ import { join } from 'path';
 import { BaseConfig, TowerInfo } from './types';
 import { convertApeiriaMap, convertFloor } from './floor';
 
-interface DatasetMergable<T> {
+export interface DatasetMergable<T> {
     datasetId: number;
     data: Record<string, T>;
 }

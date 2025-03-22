@@ -166,6 +166,9 @@ export function overallSimilarity(
         if (maxGraph) comparedGraph.add(maxGraph);
     });
 
+    // 不可达区域惩罚
+    const reduction =
+        1 / (1 + Math.abs(a.unreachable.size - b.unreachable.size));
     // 取根号使结果更接近线性
-    return Math.sqrt(totalSimilarity / graphsA.length);
+    return Math.sqrt(totalSimilarity / graphsA.length) * reduction;
 }

@@ -6,7 +6,6 @@ import { directions, tileType } from './topology/graph';
 import { calculateVisualSimilarity } from './vision/similarity';
 import { BaseConfig } from './types';
 import { Presets, SingleBar } from 'cli-progress';
-import { log } from 'console';
 
 interface MinamoConfig extends BaseConfig {}
 
@@ -25,8 +24,15 @@ interface MinamoDataset {
 
 const [output, ...list] = process.argv.slice(2);
 // 判断 assigned 模式，此模式下只会对前两个塔处理，会在这两个塔之间对比，而单个塔的地图不会对比
-const assigned = list.at(-1) === 'assigned';
+const assigned = list.at(-1)?.startsWith('assigned');
+const assignedCount = parseAssigned(list.at(-1)!);
 if (assigned) list.pop();
+
+function parseAssigned(arg: string): [number, number] {
+    const p = arg.slice(9);
+    const [a, b] = p.split(':');
+    return [parseInt(a) || 100, parseInt(b) || 100];
+}
 
 function chooseFrom<T>(arr: T[], n: number): T[] {
     const copy = arr.slice();
@@ -323,12 +329,13 @@ function parseAllData(data: Map<string, FloorData>): MinamoDataset {
 
 function generateAssignedData(
     data1: Map<string, FloorData>,
-    data2: Map<string, FloorData>
+    data2: Map<string, FloorData>,
+    count: [number, number]
 ): MinamoDataset {
     const length = data1.size + data2.size;
     const totalCount = data1.size * data2.size;
-    const count1 = Math.min(100, data1.size);
-    const count2 = Math.min(100, data2.size);
+    const count1 = Math.min(count[0], data1.size);
+    const count2 = Math.min(count[1], data2.size);
     const keys1 = [...data1.keys()];
     const keys2 = [...data2.keys()];
     const choose1 = chooseFrom(keys1, count1);
@@ -388,7 +395,7 @@ function generateAssignedData(
         }
         const data1 = await readOne(tower1);
         const data2 = await readOne(tower2);
-        const results = generateAssignedData(data1, data2);
+        const results = generateAssignedData(data1, data2, assignedCount);
         await writeFile(output, JSON.stringify(results, void 0), 'utf-8');
         const size = Object.keys(results.data).length;
         console.log(`✅ 已处理 ${list.length} 个塔，共 ${size} 个组合`);
