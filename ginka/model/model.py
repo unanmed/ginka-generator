@@ -26,6 +26,6 @@ class GinkaModel(nn.Module):
         x = self.fc(feat)
         x = x.view(-1, self.base_ch, 32, 32)
         x = self.unet(x)
-        x = self.down_sample(x)
-        return F.softmax(x, dim=1)
+        x = F.interpolate(x, (13, 13), mode='bilinear')
+        return x, F.softmax(x, dim=1)
     

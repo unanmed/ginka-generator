@@ -66,7 +66,7 @@ def matrix_to_image_cv(map_matrix, tile_set, tile_size=32):
 def validate():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to validate model.")
     model = GinkaModel()
-    state = torch.load("result/ginka_checkpoint/15.pth", map_location=device)["model_state"]
+    state = torch.load("result/ginka.pth", map_location=device)["model_state"]
     model.load_state_dict(state)
     model.to(device)
     
@@ -108,7 +108,7 @@ def validate():
             target_topo_feat = batch["target_topo_feat"].to(device)
             feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
             # 前向传播
-            output = model(feat_vec)
+            output, output_softmax = model(feat_vec)
             map_matrix = torch.argmax(output, dim=1)
             
             for matrix in map_matrix[:].cpu():
@@ -118,7 +118,7 @@ def validate():
                 idx += 1
             
             # 计算损失
-            _, loss = criterion(output, target, target_vision_feat, target_topo_feat)
+            _, loss = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
             val_loss += loss.item()
             
     avg_val_loss = val_loss / len(val_loader)

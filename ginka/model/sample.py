@@ -7,7 +7,7 @@ class MapDownSample(nn.Module):
         self.down = nn.Sequential(
             nn.Conv2d(in_ch, in_ch, 3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Conv2d(in_ch, out_ch, 3, stride=1, padding=0)
+            nn.Conv2d(in_ch, out_ch, 4, stride=1, padding=0)
         )
         
     def forward(self, x):

@@ -48,7 +48,7 @@ def train():
     )
     
     # 设定优化器与调度器
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     criterion = GinkaLoss(minamo)
     
@@ -75,10 +75,10 @@ def train():
             feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
             # 前向传播
             optimizer.zero_grad()
-            output = model(feat_vec)
+            _, output_softmax = model(feat_vec)
             
             # 计算损失
-            scaled_losses, losses = criterion(output, target, target_vision_feat, target_topo_feat)
+            scaled_losses, losses = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
             
             # 反向传播
             scaled_losses.backward()
@@ -115,11 +115,11 @@ def train():
                     feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
                     
                     # 前向传播
-                    output = model(feat_vec)
+                    output, output_softmax = model(feat_vec)
                     print(torch.argmax(output, dim=1)[0])
                     
                     # 计算损失
-                    scaled_losses, losses = criterion(output, target, target_vision_feat, target_topo_feat)
+                    scaled_losses, losses = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
                     loss_val += losses.item()
             
             avg_val_loss = loss_val / len(dataloader_val)

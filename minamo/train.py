@@ -79,7 +79,7 @@ def train():
         #     for name, param in model.named_parameters():
         #         param.requires_grad = True
         
-        for batch in dataloader:
+        for batch in tqdm(dataloader, leave=False):
             # 数据迁移到设备
             map1, map2, vision_simi, topo_simi, graph1, graph2 = batch
             map1 = map1.to(device) # 转为 [B, C, H, W]
