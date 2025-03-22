@@ -15,6 +15,7 @@ class GinkaModel(nn.Module):
         )
         self.unet = GinkaUNet(base_ch, num_classes)
         self.down_sample = MapDownSample(num_classes, num_classes)
+        self.pool = nn.AdaptiveMaxPool2d((13, 13))
         
     def forward(self, feat):
         """
@@ -26,6 +27,6 @@ class GinkaModel(nn.Module):
         x = self.fc(feat)
         x = x.view(-1, self.base_ch, 32, 32)
         x = self.unet(x)
-        x = F.interpolate(x, (13, 13), mode='bilinear')
+        x = self.pool(x)
         return x, F.softmax(x, dim=1)
     
