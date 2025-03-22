@@ -13,9 +13,14 @@ def validate():
     model = MinamoModel(32)
     model.load_state_dict(torch.load("result/minamo.pth", map_location=device)["model_state"])
     model.to(device)
+    
+    for name, param in model.named_parameters():
+        print(f"Layer: {name}, Params: {param.numel()}")
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total_params}")
 
     # 准备数据集
-    val_dataset = MinamoDataset("datasets/minamo-eval.json")
+    val_dataset = MinamoDataset("minamo-eval.json")
     val_loader = DataLoader(
         val_dataset,
         batch_size=32,

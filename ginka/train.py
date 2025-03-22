@@ -48,7 +48,7 @@ def train():
     )
     
     # 设定优化器与调度器
-    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     criterion = GinkaLoss(minamo)
     

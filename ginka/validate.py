@@ -66,9 +66,14 @@ def matrix_to_image_cv(map_matrix, tile_set, tile_size=32):
 def validate():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to validate model.")
     model = GinkaModel()
-    state = torch.load("result/ginka_checkpoint/30.pth", map_location=device)["model_state"]
+    state = torch.load("result/ginka_checkpoint/15.pth", map_location=device)["model_state"]
     model.load_state_dict(state)
     model.to(device)
+    
+    for name, param in model.named_parameters():
+        print(f"Layer: {name}, Params: {param.numel()}")
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total_params}")
     
     minamo = MinamoModel(32)
     minamo.load_state_dict(torch.load("result/minamo.pth", map_location=device)["model_state"])

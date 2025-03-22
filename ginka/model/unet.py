@@ -57,7 +57,7 @@ class GinkaBottleneck(nn.Module):
         return self.conv(x)
 
 class GinkaUNet(nn.Module):
-    def __init__(self, in_ch=64, out_ch=32):
+    def __init__(self, in_ch=32, out_ch=32):
         """Ginka Model UNet 部分
         """
         super().__init__()
