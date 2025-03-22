@@ -15,7 +15,7 @@ def validate():
     model.to(device)
 
     # 准备数据集
-    val_dataset = MinamoDataset("minamo-eval.json")
+    val_dataset = MinamoDataset("datasets/minamo-eval.json")
     val_loader = DataLoader(
         val_dataset,
         batch_size=32,

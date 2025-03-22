@@ -61,15 +61,23 @@ def train():
     
     if args.resume:
         data = torch.load(args.from_state, map_location=device)
-        model.load_state_dict(data["model_state"])
+        model.load_state_dict(data["model_state"], strict=False)
         if args.load_optim:
             optimizer.load_state_dict(data["optimizer_state"])
         print("Train from loaded state.")
+        
+    # for name, param in model.named_parameters():
+    #     if 'ins' not in name:  # 仅训练扩展部分
+    #         param.requires_grad = False
     
     # 开始训练
     for epoch in tqdm(range(args.epochs)):
         model.train()
         total_loss = 0
+        
+        # if epoch == 30:
+        #     for name, param in model.named_parameters():
+        #         param.requires_grad = True
         
         for batch in dataloader:
             # 数据迁移到设备

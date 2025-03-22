@@ -14,11 +14,15 @@ class MinamoTopoModel(nn.Module):
         # 图卷积层
         self.conv1 = GATConv(emb_dim, hidden_dim*2, heads=8, dropout=0.2)
         self.conv2 = GATConv(hidden_dim*16, hidden_dim*4, heads=4)
+        self.conv_ins2 = GATConv(hidden_dim*16, hidden_dim*4, heads=4, dropout=0.3)
+        self.conv_ins1 = GATConv(hidden_dim*16, hidden_dim*8, heads=2)
         self.conv3 = GATConv(hidden_dim*16, out_dim, concat=False)
         
         # 正则化
         self.norm1 = nn.LayerNorm(hidden_dim*16)
         self.norm2 = nn.LayerNorm(hidden_dim*16)
+        self.norm_ins2 = nn.LayerNorm(hidden_dim*16)
+        self.norm_ins1 = nn.LayerNorm(hidden_dim*16)
         self.norm3 = nn.LayerNorm(out_dim)
         
         # 池化层
@@ -39,6 +43,12 @@ class MinamoTopoModel(nn.Module):
         
         x = self.conv2(x, graph.edge_index)
         x = F.elu(self.norm2(x))
+        
+        x = self.conv_ins2(x, graph.edge_index)
+        x = F.elu(self.norm_ins2(x))
+        
+        x = self.conv_ins1(x, graph.edge_index)
+        x = F.elu(self.norm_ins1(x))
         
         x = self.conv3(x, graph.edge_index)
         x = F.elu(self.norm3(x))

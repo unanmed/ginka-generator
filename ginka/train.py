@@ -78,12 +78,12 @@ def train():
             output = model(feat_vec)
             
             # 计算损失
-            loss = criterion(output, target, target_vision_feat, target_topo_feat)
+            scaled_losses, losses = criterion(output, target, target_vision_feat, target_topo_feat)
             
             # 反向传播
-            loss.backward()
+            scaled_losses.backward()
             optimizer.step()
-            total_loss += loss.item()
+            total_loss += losses.item()
             
         avg_loss = total_loss / len(dataloader)
         tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {avg_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
@@ -119,8 +119,8 @@ def train():
                     print(torch.argmax(output, dim=1)[0])
                     
                     # 计算损失
-                    loss = criterion(output, target, target_vision_feat, target_topo_feat)
-                    loss_val += loss.item()
+                    scaled_losses, losses = criterion(output, target, target_vision_feat, target_topo_feat)
+                    loss_val += losses.item()
             
             avg_val_loss = loss_val / len(dataloader_val)
             tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation::loss: {avg_val_loss:.6f}")

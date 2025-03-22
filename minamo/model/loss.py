@@ -12,4 +12,5 @@ class MinamoLoss(nn.Module):
         # print(vis_pred[0].item(), topo_pred[0].item(), vis_true[0].item(), topo_true[0].item())
         vis_loss = self.mse(vis_pred, vis_true)
         topo_loss = self.mse(topo_pred, topo_true)
+        # print(vis_loss.item(), topo_loss.item())
         return self.vision_weight * vis_loss + self.topo_weight * topo_loss

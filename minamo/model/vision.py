@@ -30,6 +30,11 @@ class MinamoVisionModel(nn.Module):
             CBAM(conv_ch*8),
             nn.GELU(),
             
+            nn.Conv2d(conv_ch*8, conv_ch*8, 3, padding=1),
+            nn.BatchNorm2d(conv_ch*8),
+            CBAM(conv_ch*8),
+            nn.GELU(),
+            
             nn.AdaptiveMaxPool2d(1)
         )
         
