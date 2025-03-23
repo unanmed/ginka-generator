@@ -7,6 +7,7 @@
         "ginka": "tsx ./src/ginka.ts",
         "minamo": "tsx ./src/minamo.ts",
         "merge": "tsx ./src/merge.ts",
+        "review": "tsx ./src/review.ts",
         "test:topo": "tsx ./src/topology/test.ts",
         "test:vision": "tsx ./src/vision/test.ts"
     },

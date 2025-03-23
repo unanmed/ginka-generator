@@ -1,5 +1,11 @@
 import { writeFile } from 'fs-extra';
-import { FloorData, readOne, getAllFloors, parseTowerInfo } from './utils';
+import {
+    FloorData,
+    readOne,
+    getAllFloors,
+    parseTowerInfo,
+    chooseFrom
+} from './utils';
 import { compareMap } from './topology/compare';
 import { mirrorMapX, mirrorMapY, rotateMap } from './topology/transform';
 import { directions, tileType } from './topology/graph';
@@ -32,15 +38,6 @@ function parseAssigned(arg: string): [number, number] {
     const p = arg.slice(9);
     const [a, b] = p.split(':');
     return [parseInt(a) || 100, parseInt(b) || 100];
-}
-
-function chooseFrom<T>(arr: T[], n: number): T[] {
-    const copy = arr.slice();
-    for (let i = copy.length - 1; i > 0; i--) {
-        let randIndex = Math.floor(Math.random() * (i + 1));
-        [copy[i], copy[randIndex]] = [copy[randIndex], copy[i]];
-    }
-    return copy.slice(0, n);
 }
 
 function chooseN(maxCount: number, n: number) {

@@ -17,6 +17,9 @@ export interface FloorData {
 export function mergeDataset<T>(
     ...datasets: DatasetMergable<T>[]
 ): DatasetMergable<T> {
+    if (datasets.length === 1) {
+        return datasets[0];
+    }
     const data: Record<string, T> = {};
     datasets.forEach(v => {
         for (const [key, value] of Object.entries(v.data)) {
@@ -174,4 +177,13 @@ export async function fromJSON(path: string) {
         floorMap.set(`${name}:${key}`, floorData);
     }
     return floorMap;
+}
+
+export function chooseFrom<T>(arr: T[], n: number): T[] {
+    const copy = arr.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
+        let randIndex = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[randIndex]] = [copy[randIndex], copy[i]];
+    }
+    return copy.slice(0, n);
 }
