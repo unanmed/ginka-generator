@@ -12,4 +12,6 @@ pnpm minamo "../minamo-dataset.json" "../result/ginka_val.json" "../../Apeiria/p
 pnpm minamo "../minamo-eval.json" "../result/ginka_val.json" "../../Apeiria-eval/project" assigned:100:2
 pnpm merge "../datasets/minamo-dataset-merged.json" "../datasets/minamo-dataset-merged.json" "../datasets/minamo-dataset-$1.json"
 pnpm merge "../datasets/minamo-eval-merged.json" "../datasets/minamo-eval-merged.json" "../datasets/minamo-eval-$1.json"
+pnpm review "../minamo-dataset.json" "../datasets/minamo-dataset-merged.json"
+pnpm review "../minamo-eval.json" "../datasets/minamo-eval-merged.json"
 cd ..
