@@ -20,11 +20,18 @@ export function mergeDataset<T>(
     if (datasets.length === 1) {
         return datasets[0];
     }
+    const usedKeys = new Set<string>();
     const data: Record<string, T> = {};
     datasets.forEach(v => {
         for (const [key, value] of Object.entries(v.data)) {
-            const dataKey = `${v.datasetId}/${key}`;
-            data[dataKey] = value;
+            if (usedKeys.has(key)) {
+                const dataKey = `${v.datasetId}/${key}`;
+                data[dataKey] = value;
+                usedKeys.add(dataKey);
+            } else {
+                data[key] = value;
+                usedKeys.add(key);
+            }
         }
     });
 
