@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import spectral_norm
 from shared.attention import CBAM
 
 class MinamoVisionModel(nn.Module):
@@ -11,26 +12,26 @@ class MinamoVisionModel(nn.Module):
         
         # 卷积部分
         self.vision_conv = nn.Sequential(
-            nn.Conv2d(conv_ch, conv_ch*2, 3, padding=1),
+            spectral_norm(nn.Conv2d(conv_ch, conv_ch*2, 3, padding=1)),
             nn.BatchNorm2d(conv_ch*2),
             CBAM(conv_ch*2),
             nn.GELU(),
             nn.MaxPool2d(2),
             nn.Dropout2d(0.4),
             
-            nn.Conv2d(conv_ch*2, conv_ch*4, 3, padding=1),
+            spectral_norm(nn.Conv2d(conv_ch*2, conv_ch*4, 3, padding=1)),
             nn.BatchNorm2d(conv_ch*4),
             CBAM(conv_ch*4),
             nn.GELU(),
             nn.MaxPool2d(2),
             nn.Dropout2d(0.4),
             
-            nn.Conv2d(conv_ch*4, conv_ch*8, 3, padding=1),
+            spectral_norm(nn.Conv2d(conv_ch*4, conv_ch*8, 3, padding=1)),
             nn.BatchNorm2d(conv_ch*8),
             CBAM(conv_ch*8),
             nn.GELU(),
             
-            nn.Conv2d(conv_ch*8, conv_ch*8, 3, padding=1),
+            spectral_norm(nn.Conv2d(conv_ch*8, conv_ch*8, 3, padding=1)),
             nn.BatchNorm2d(conv_ch*8),
             CBAM(conv_ch*8),
             nn.GELU(),

@@ -56,7 +56,7 @@ def train():
     
     # 设定优化器与调度器
     optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=3, T_mult=2, eta_min=1e-6)
     criterion = MinamoLoss()
     
     if args.resume:
@@ -126,7 +126,7 @@ def train():
         scheduler.step()
         
         # 每十轮推理一次验证集
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 1 == 0:
             model.eval()
             val_loss = 0
             with torch.no_grad():

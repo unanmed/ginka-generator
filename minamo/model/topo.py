@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import spectral_norm
 from torch_geometric.nn import global_mean_pool, TopKPooling, GATConv
 from torch_geometric.data import Data
 
@@ -17,6 +18,12 @@ class MinamoTopoModel(nn.Module):
         self.conv_ins2 = GATConv(hidden_dim*16, hidden_dim*4, heads=4, dropout=0.3)
         self.conv_ins1 = GATConv(hidden_dim*16, hidden_dim*8, heads=2)
         self.conv3 = GATConv(hidden_dim*16, out_dim, concat=False)
+        
+        self.conv1.lin = spectral_norm(self.conv1.lin)
+        self.conv2.lin = spectral_norm(self.conv2.lin)
+        self.conv_ins2.lin = spectral_norm(self.conv_ins2.lin)
+        self.conv_ins1.lin = spectral_norm(self.conv_ins1.lin)
+        self.conv3.lin = spectral_norm(self.conv3.lin)
         
         # 正则化
         self.norm1 = nn.LayerNorm(hidden_dim*16)

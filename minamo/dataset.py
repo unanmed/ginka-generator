@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 from shared.graph import convert_soft_map_to_graph
 
-def random_smooth_onehot(onehot_map, min_main=0.8, max_main=1.0, epsilon=0.8):
+def random_smooth_onehot(onehot_map, min_main=0.65, max_main=1.0, epsilon=0.35):
     """
     生成随机平滑的 one-hot 编码，使主类别概率不再固定，而是随机波动
     """

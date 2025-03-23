@@ -66,7 +66,7 @@ def matrix_to_image_cv(map_matrix, tile_set, tile_size=32):
 def validate():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to validate model.")
     model = GinkaModel()
-    state = torch.load("result/ginka_checkpoint/10.pth", map_location=device)["model_state"]
+    state = torch.load("result/ginka.pth", map_location=device)["model_state"]
     model.load_state_dict(state)
     model.to(device)
     
