@@ -106,7 +106,7 @@ def validate():
             target = batch["target"].to(device)
             target_vision_feat = batch["target_vision_feat"].to(device)
             target_topo_feat = batch["target_topo_feat"].to(device)
-            feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
+            feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
             # 前向传播
             output, output_softmax = model(feat_vec)
             map_matrix = torch.argmax(output, dim=1)

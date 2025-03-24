@@ -20,7 +20,7 @@ def validate():
     print(f"Total parameters: {total_params}")
 
     # 准备数据集
-    val_dataset = MinamoDataset("minamo-eval.json")
+    val_dataset = MinamoDataset("datasets/minamo-eval-1.json")
     val_loader = DataLoader(
         val_dataset,
         batch_size=32,
@@ -43,6 +43,8 @@ def validate():
             
             vision_feat1, topo_feat1 = model(map1_val, graph1)
             vision_feat2, topo_feat2 = model(map2_val, graph2)
+            
+            print(vision_feat1.isnan().any().item(), topo_feat1.isnan().any().item(), vision_feat2.isnan().any().item(), topo_feat2.isnan().any().item())
             
             vision_pred_val = F.cosine_similarity(vision_feat1, vision_feat2, -1).unsqueeze(-1)
             topo_pred_val = F.cosine_similarity(topo_feat1, topo_feat2, -1).unsqueeze(-1)

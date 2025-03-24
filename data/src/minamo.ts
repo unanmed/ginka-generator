@@ -95,8 +95,8 @@ function generateTransformData(
             types.push([rot, flip]);
         }
     }
-    // 随机抽取最多两个
-    const trans = chooseFrom(types, Math.floor(Math.random() * 2));
+    // 随机抽取最多一个
+    const trans = chooseFrom(types, Math.floor(Math.random() * 1));
     return trans
         .map(([rot, flip]) => {
             const com1 = `${id1}.${rot}.${flip}:${id1}`;
@@ -167,10 +167,10 @@ function generateTransformData(
 }
 
 function generateSimilarData(id: string, map: number[][]) {
-    // 生成最多五个微调地图
+    // 生成最多两个微调地图
     const width = map[0].length;
     const height = map.length;
-    const num = Math.floor(Math.random() * 3);
+    const num = Math.floor(Math.random() * 2);
     const res: [id: string, data: MinamoTrainData][] = [];
 
     for (let i = 0; i < num; i++) {
@@ -241,7 +241,7 @@ function generatePair(
     // 自身与自身对比的训练集，保证模型对相同地图输出 1
     const self1 = `${id1}:${id1}`;
     const self2 = `${id2}:${id2}`;
-    const selfTrain = chooseFrom([self1, self2], Math.floor(Math.random() * 3));
+    const selfTrain = chooseFrom([self1, self2], Math.floor(Math.random() * 1));
     if (selfTrain.includes(self1) && !data[`${id1}:${id1}`]) {
         const selfTrain1: MinamoTrainData = {
             map1: map1,

@@ -110,7 +110,7 @@ def train():
             total_loss += loss.item()
             
         ave_loss = total_loss / len(dataloader)
-        print(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {ave_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
+        tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {ave_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
         
         # total_norm = 0
         # for p in model.parameters():
@@ -128,7 +128,7 @@ def train():
         scheduler.step()
         
         # 每十轮推理一次验证集
-        if (epoch + 1) % 1 == 0:
+        if (epoch + 1) % 5 == 0:
             model.eval()
             val_loss = 0
             with torch.no_grad():
@@ -152,7 +152,7 @@ def train():
                     val_loss += loss_val.item()
                     
             avg_val_loss = val_loss / len(val_loader)
-            print(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation::loss: {avg_val_loss:.6f}")
+            tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation::loss: {avg_val_loss:.6f}")
             torch.save({
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),

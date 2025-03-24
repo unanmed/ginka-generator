@@ -48,7 +48,7 @@ def train():
     )
     
     # 设定优化器与调度器
-    optimizer = optim.AdamW(model.parameters(), lr=5e-3)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     criterion = GinkaLoss(minamo)
     
@@ -72,7 +72,7 @@ def train():
             target = batch["target"].to(device)
             target_vision_feat = batch["target_vision_feat"].to(device)
             target_topo_feat = batch["target_topo_feat"].to(device)
-            feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
+            feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
             # 前向传播
             optimizer.zero_grad()
             _, output_softmax = model(feat_vec)
@@ -84,6 +84,10 @@ def train():
             scaled_losses.backward()
             optimizer.step()
             total_loss += losses.item()
+            # for name, param in model.named_parameters():
+            #     if param.grad is not None:
+            #         print(f"{name}: grad_mean={param.grad.abs().mean():.3e}, max={param.grad.abs().max():.3e}")
+
             
         avg_loss = total_loss / len(dataloader)
         tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {avg_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
@@ -112,7 +116,7 @@ def train():
                     target = batch["target"].to(device)
                     target_vision_feat = batch["target_vision_feat"].to(device)
                     target_topo_feat = batch["target_topo_feat"].to(device)
-                    feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device)
+                    feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
                     
                     # 前向传播
                     output, output_softmax = model(feat_vec)
