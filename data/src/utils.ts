@@ -15,6 +15,7 @@ export interface FloorData {
 }
 
 export function mergeDataset<T>(
+    allowDuplicateKeys: boolean,
     ...datasets: DatasetMergable<T>[]
 ): DatasetMergable<T> {
     if (datasets.length === 1) {
@@ -24,7 +25,7 @@ export function mergeDataset<T>(
     const data: Record<string, T> = {};
     datasets.forEach(v => {
         for (const [key, value] of Object.entries(v.data)) {
-            if (usedKeys.has(key)) {
+            if (usedKeys.has(key) && allowDuplicateKeys) {
                 const dataKey = `${v.datasetId}/${key}`;
                 data[dataKey] = value;
                 usedKeys.add(dataKey);

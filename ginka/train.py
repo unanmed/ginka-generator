@@ -61,11 +61,19 @@ def train():
         if args.load_optim:
             optimizer.load_state_dict(data["optimizer_state"])
         print("Train from loaded state.")
+        
+    else:
+        # 从头开始训练的话，初始时先把 minamo 损失值权重改为 0
+        criterion.weight[0] = 0.0
     
     # 开始训练
     for epoch in tqdm(range(args.epochs)):
         model.train()
         total_loss = 0
+        
+        # 从头开始训练的，在第 10 个 epoch 将 minamo 损失值权重改回来
+        if not args.resume and epoch == 10:
+            criterion.weight[0] = 0.5
         
         for batch in dataloader:
             # 数据迁移到设备

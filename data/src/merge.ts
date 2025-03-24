@@ -10,6 +10,6 @@ const [output, ...datasets] = process.argv.slice(2);
             return JSON.parse(file) as DatasetMergable<any>;
         })
     );
-    const merged = mergeDataset(...data);
+    const merged = mergeDataset(true, ...data);
     await writeFile(output, JSON.stringify(merged), 'utf-8');
 })();

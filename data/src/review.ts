@@ -26,13 +26,13 @@ function getNum() {
     );
     const targetFile = await readFile(target, 'utf-8');
     const targetData = JSON.parse(targetFile) as DatasetMergable<any>;
-    const merged = mergeDataset(...datas);
+    const merged = mergeDataset(true, ...datas);
     const keys = Object.keys(merged.data);
     const toReview = chooseFrom(keys, n);
     const reviewData: DatasetMergable<any> = {
         datasetId: Math.floor(Math.random() * 1e12),
         data: Object.fromEntries(toReview.map(v => [v, merged.data[v]]))
     };
-    const reviewed = mergeDataset(targetData, reviewData);
+    const reviewed = mergeDataset(false, targetData, reviewData);
     await writeFile(target, JSON.stringify(reviewed), 'utf-8');
 })();
