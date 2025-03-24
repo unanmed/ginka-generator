@@ -5,7 +5,7 @@ from .unet import GinkaUNet
 from .sample import MapDownSample
 
 class GinkaModel(nn.Module):
-    def __init__(self, feat_dim=256, base_ch=64, num_classes=32):
+    def __init__(self, feat_dim=1024, base_ch=64, num_classes=32):
         """Ginka Model 模型定义部分
         """
         super().__init__()

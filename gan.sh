@@ -8,8 +8,8 @@ python3 -m ginka.validate
 mv "minamo-dataset.json" "datasets/minamo-dataset-$1.json"
 mv "minamo-eval.json" "datasets/minamo-eval-$1.json"
 cd data
-pnpm minamo "../minamo-dataset.json" "../result/ginka_val.json" "../../Apeiria/project" assigned:100:2
-pnpm minamo "../minamo-eval.json" "../result/ginka_val.json" "../../Apeiria-eval/project" assigned:100:2
+pnpm minamo "../minamo-dataset.json" "../result/ginka_val.json" "../../Apeiria/project" assigned:100:40
+pnpm minamo "../minamo-eval.json" "../result/ginka_val.json" "../../Apeiria-eval/project" assigned:100:10
 pnpm review "../minamo-dataset.json" "../datasets/minamo-dataset-merged.json"
 pnpm review "../minamo-eval.json" "../datasets/minamo-eval-merged.json"
 pnpm merge "../datasets/minamo-dataset-merged.json" "../datasets/minamo-dataset-merged.json" "../datasets/minamo-dataset-$1.json"

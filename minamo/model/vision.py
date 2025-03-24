@@ -5,33 +5,35 @@ from torch.nn.utils import spectral_norm
 from shared.attention import CBAM
 
 class MinamoVisionModel(nn.Module):
-    def __init__(self, tile_types=32, conv_ch=32, out_dim=128):
+    def __init__(self, tile_types=32, conv_ch=64, out_dim=512):
         super().__init__()
         # 输入 softmax 概率值
         self.input_conv = nn.Conv2d(tile_types, conv_ch, 3, padding=1)
         
         # 卷积部分
         self.vision_conv = nn.Sequential(
-            spectral_norm(nn.Conv2d(conv_ch, conv_ch*2, 3, padding=1)),
+            nn.Conv2d(conv_ch, conv_ch*2, 3, padding=1),
             nn.BatchNorm2d(conv_ch*2),
             CBAM(conv_ch*2),
             nn.GELU(),
             nn.MaxPool2d(2),
             nn.Dropout2d(0.4),
             
-            spectral_norm(nn.Conv2d(conv_ch*2, conv_ch*4, 3, padding=1)),
+            nn.Conv2d(conv_ch*2, conv_ch*4, 3, padding=1),
             nn.BatchNorm2d(conv_ch*4),
             CBAM(conv_ch*4),
             nn.GELU(),
             nn.MaxPool2d(2),
             nn.Dropout2d(0.4),
             
-            spectral_norm(nn.Conv2d(conv_ch*4, conv_ch*8, 3, padding=1)),
+            nn.Conv2d(conv_ch*4, conv_ch*8, 3, padding=1),
             nn.BatchNorm2d(conv_ch*8),
             CBAM(conv_ch*8),
             nn.GELU(),
+            # nn.MaxPool2d(2),
+            # nn.Dropout2d(0.4),
             
-            spectral_norm(nn.Conv2d(conv_ch*8, conv_ch*8, 3, padding=1)),
+            nn.Conv2d(conv_ch*8, conv_ch*8, 3, padding=1),
             nn.BatchNorm2d(conv_ch*8),
             CBAM(conv_ch*8),
             nn.GELU(),

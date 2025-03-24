@@ -1,4 +1,5 @@
 import os
+import sys
 from datetime import datetime
 import torch
 import torch.optim as optim
@@ -13,6 +14,7 @@ from shared.args import parse_arguments
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/minamo_checkpoint", exist_ok=True)
+disable_tqdm = not sys.stdout.isatty()  # 如果 stdout 被重定向，则禁用 tqdm
 
 def collate_fn(batch):
     """动态处理不同尺寸地图的批处理"""
@@ -56,7 +58,7 @@ def train():
     
     # 设定优化器与调度器
     optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=3, T_mult=2, eta_min=1e-6)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     criterion = MinamoLoss()
     
     if args.resume:
@@ -71,7 +73,7 @@ def train():
     #         param.requires_grad = False
     
     # 开始训练
-    for epoch in tqdm(range(args.epochs)):
+    for epoch in tqdm(range(args.epochs), disable=disable_tqdm):
         model.train()
         total_loss = 0
         
@@ -79,7 +81,7 @@ def train():
         #     for name, param in model.named_parameters():
         #         param.requires_grad = True
         
-        for batch in tqdm(dataloader, leave=False):
+        for batch in tqdm(dataloader, leave=False, disable=disable_tqdm):
             # 数据迁移到设备
             map1, map2, vision_simi, topo_simi, graph1, graph2 = batch
             map1 = map1.to(device) # 转为 [B, C, H, W]
@@ -108,7 +110,7 @@ def train():
             total_loss += loss.item()
             
         ave_loss = total_loss / len(dataloader)
-        tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {ave_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
+        print(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {ave_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
         
         # total_norm = 0
         # for p in model.parameters():
@@ -130,7 +132,7 @@ def train():
             model.eval()
             val_loss = 0
             with torch.no_grad():
-                for val_batch in val_loader:
+                for val_batch in tqdm(val_loader, leave=False, disable=disable_tqdm):
                     map1_val, map2_val, vision_simi_val, topo_simi_val, graph1, graph2  = val_batch
                     map1_val = map1_val.to(device)
                     map2_val = map2_val.to(device)
@@ -150,7 +152,7 @@ def train():
                     val_loss += loss_val.item()
                     
             avg_val_loss = val_loss / len(val_loader)
-            tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation::loss: {avg_val_loss:.6f}")
+            print(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Validation::loss: {avg_val_loss:.6f}")
             torch.save({
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),

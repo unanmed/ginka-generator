@@ -2,9 +2,9 @@ import json
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-from shared.graph import convert_soft_map_to_graph
+from shared.graph import differentiable_convert_to_data
 
-def random_smooth_onehot(onehot_map, min_main=0.65, max_main=1.0, epsilon=0.35):
+def random_smooth_onehot(onehot_map, min_main=0.75, max_main=1.0, epsilon=0.25):
     """
     生成随机平滑的 one-hot 编码，使主类别概率不再固定，而是随机波动
     """
@@ -46,8 +46,8 @@ class MinamoDataset(Dataset):
         map1_probs = random_smooth_onehot(map1_probs)
         map2_probs = random_smooth_onehot(map2_probs)
         
-        graph1 = convert_soft_map_to_graph(map1_probs)
-        graph2 = convert_soft_map_to_graph(map2_probs)
+        graph1 = differentiable_convert_to_data(map1_probs)
+        graph2 = differentiable_convert_to_data(map2_probs)
         
         return (
             map1_probs,
