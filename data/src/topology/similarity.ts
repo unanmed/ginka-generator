@@ -59,9 +59,10 @@ function weisfeilerLehmanIteration(
             const neighborLabels = node.neighbors
                 .map(n => n.currentLabel)
                 .sort();
+            
             const compositeLabel = `${node.currentLabel}|${neighborLabels.join(
                 ','
-            )}`;
+            )}`.slice(0, 4096);
 
             newLabels.push(compositeLabel);
         });

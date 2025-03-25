@@ -4,3 +4,4 @@ torchaudio
 tqdm
 torch-geometric
 transformers
+torch-scatter

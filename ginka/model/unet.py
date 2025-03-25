@@ -1,39 +1,50 @@
 import torch
 import torch.nn as nn
-from shared.attention import CBAM
+import torch.nn.functional as F
+from shared.attention import CBAM, SEBlock
 
 class GinkaEncoder(nn.Module):
     """编码器（下采样）部分"""
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, attention=False, block='CBAM'):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
+            nn.InstanceNorm2d(out_channels),
             nn.GELU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            # CBAM(out_channels),
-            nn.GELU()
+            nn.InstanceNorm2d(out_channels),
         )
+        # 注意力
+        if attention:
+            if block == 'CBAM':
+                self.conv.append(CBAM(out_channels))
+            elif block == 'SEBlock':
+                self.conv.append(SEBlock(out_channels))
+        self.conv.append(nn.GELU())
         self.pool = nn.MaxPool2d(2)
 
     def forward(self, x):
-        x_res = self.conv(x)  
-        x_down = self.pool(x_res)  
-        return x_down, x_res  
+        x_res = self.conv(x)
+        x_down = self.pool(x_res)
+        return x_down, x_res
     
 class GinkaDecoder(nn.Module):
     """解码器（上采样）部分"""
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, attention=False, block='CBAM'):
         super().__init__()
         self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
 
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels + out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            # CBAM(out_channels),
-            nn.GELU()
+            nn.InstanceNorm2d(out_channels),
         )
+        # 注意力
+        if attention:
+            if block == 'CBAM':
+                self.conv.append(CBAM(out_channels))
+            elif block == 'SEBlock':
+                self.conv.append(SEBlock(out_channels))
+        self.conv.append(nn.GELU())
     
     def forward(self, x, skip):
         x = self.upsample(x)
@@ -46,10 +57,11 @@ class GinkaBottleneck(nn.Module):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
+            nn.InstanceNorm2d(out_channels),
             nn.GELU(),
+            SEBlock(out_channels),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
+            nn.InstanceNorm2d(out_channels),
             nn.GELU(),
         )
 
@@ -61,21 +73,20 @@ class GinkaUNet(nn.Module):
         """Ginka Model UNet 部分
         """
         super().__init__()
-        self.down1 = GinkaEncoder(in_ch, in_ch*2)
-        self.down2 = GinkaEncoder(in_ch*2, in_ch*4)
-        self.down3 = GinkaEncoder(in_ch*4, in_ch*8)
-        self.down4 = GinkaEncoder(in_ch*8, in_ch*16)
+        self.down1 = GinkaEncoder(in_ch, in_ch*2, attention=True)
+        self.down2 = GinkaEncoder(in_ch*2, in_ch*4, attention=True)
+        self.down3 = GinkaEncoder(in_ch*4, in_ch*8, attention=True, block='SEBlock')
+        self.down4 = GinkaEncoder(in_ch*8, in_ch*16, attention=True, block='SEBlock')
 
         self.bottleneck = GinkaBottleneck(in_ch*16, in_ch*16)
 
-        self.up1 = GinkaDecoder(in_ch*16, in_ch*8)
-        self.up2 = GinkaDecoder(in_ch*8, in_ch*4)
-        self.up3 = GinkaDecoder(in_ch*4, in_ch*2)
-        self.up4 = GinkaDecoder(in_ch*2, in_ch)
+        self.up1 = GinkaDecoder(in_ch*16, in_ch*8, attention=True, block='SEBlock')
+        self.up2 = GinkaDecoder(in_ch*8, in_ch*4, attention=True, block='SEBlock')
+        self.up3 = GinkaDecoder(in_ch*4, in_ch*2, attention=True)
+        self.up4 = GinkaDecoder(in_ch*2, in_ch, attention=True)
 
         self.final = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, 1),
-            # nn.Softmax(dim=1)  # 适用于分类任务
         )
         
     def forward(self, x):

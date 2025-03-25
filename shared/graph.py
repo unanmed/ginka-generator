@@ -1,24 +1,23 @@
 import torch
 from torch_geometric.data import Data, Batch
 
+
 def differentiable_convert_to_data(map_probs: torch.Tensor) -> Data:
     """
-    可导的图结构转换（返回PyG Data对象）
+    可导的图结构转换（返回 PyG Data 对象）
     map_probs: [C, H, W]
     返回：
-    Data(x=[N,C], edge_index=[2,E], edge_attr=[E,C])
+    Data(x=[N, C], edge_index=[2, E], edge_attr=[E, C])
     """
     C, H, W = map_probs.shape
     device = map_probs.device
     N = H * W
 
-    # 1. 节点特征（保留所有节点）
+    # 1. 节点特征
     node_features = map_probs.view(C, -1).T  # [N, C]
 
-    # 2. 构建所有可能的边连接（预计算）
-    # 生成坐标网格
-    rows, cols = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
-    node_indices = rows * W + cols
+    # 2. 构建所有可能的边连接
+    node_indices = torch.arange(N, device=device).view(H, W)
 
     # 水平连接（右邻居）
     right_src = node_indices[:, :-1].flatten()
@@ -28,20 +27,23 @@ def differentiable_convert_to_data(map_probs: torch.Tensor) -> Data:
     down_src = node_indices[:-1, :].flatten()
     down_dst = node_indices[1:, :].flatten()
 
-    # 合并边列表
-    edge_src = torch.cat([right_src, down_src]).to(device)
-    edge_dst = torch.cat([right_dst, down_dst]).to(device)
-    edge_index = torch.stack([edge_src, edge_dst])  # [2, E]
+    # 合并边列表（双向）
+    edge_src = torch.cat([right_src, down_src])
+    edge_dst = torch.cat([right_dst, down_dst])
+    edge_index = torch.cat([
+        torch.stack([edge_src, edge_dst], dim=0),
+        torch.stack([edge_dst, edge_src], dim=0)  # 反向连接
+    ], dim=1).to(device, dtype=torch.long)
 
-    # 3. 计算可导的边权重（排除墙类型）
-    wall_class_idx = 1  # 假设类型1是墙
-    src_probs = 1.0 - map_probs[wall_class_idx].flatten()[edge_src]  # [E]
-    dst_probs = 1.0 - map_probs[wall_class_idx].flatten()[edge_dst]  # [E]
-    edge_mask = (src_probs * dst_probs).unsqueeze(1)  # [E, 1]
+    # 3. 计算可导的边权重
+    wall_class_idx = 1  # 假设类别 1 是墙
+    src_probs = torch.sigmoid(-map_probs[wall_class_idx].flatten()[edge_src])
+    dst_probs = torch.sigmoid(-map_probs[wall_class_idx].flatten()[edge_dst])
+    edge_mask = torch.nn.functional.softplus(src_probs * dst_probs).unsqueeze(1)  # [E, 1]
 
-    # 4. 边特征计算（保持可导）
-    src_feat = map_probs[:, edge_src//W, edge_src%W].T  # [E, C]
-    dst_feat = map_probs[:, edge_dst//W, edge_dst%W].T  # [E, C]
+    # 4. 计算边特征
+    src_feat = map_probs[:, edge_src // W, edge_src % W].T  # [E, C]
+    dst_feat = map_probs[:, edge_dst // W, edge_dst % W].T  # [E, C]
     edge_attr = (src_feat + dst_feat) / 2 * edge_mask  # [E, C]
 
     return Data(

@@ -16,15 +16,18 @@ class GinkaModel(nn.Module):
             nn.BatchNorm1d(fc_dim),
             nn.ReLU()
         )
-        self.deconv_layers = nn.Sequential(
-            nn.ConvTranspose2d(base_ch*8, base_ch*4, kernel_size=4, stride=2, padding=1),  # Upsample 2x
-            nn.BatchNorm2d(base_ch*4),
+        self.upsample = nn.Sequential(
+            nn.Conv2d(base_ch*8, base_ch*16, kernel_size=3, stride=1, padding=1),
+            nn.PixelShuffle(2),
+            nn.InstanceNorm2d(base_ch*4),
             nn.ReLU(),
-            nn.ConvTranspose2d(base_ch*4, base_ch*2, kernel_size=4, stride=2, padding=1),   # Upsample 2x
-            nn.BatchNorm2d(base_ch*2),
+            nn.Conv2d(base_ch*4, base_ch*8, kernel_size=3, stride=1, padding=1),
+            nn.PixelShuffle(2),
+            nn.InstanceNorm2d(base_ch*2),
             nn.ReLU(),
-            nn.ConvTranspose2d(base_ch*2, base_ch, kernel_size=4, stride=2, padding=1),   # Upsample 2x
-            nn.BatchNorm2d(base_ch),
+            nn.Conv2d(base_ch*2, base_ch*4, kernel_size=3, stride=1, padding=1),
+            nn.PixelShuffle(2),
+            nn.InstanceNorm2d(base_ch),
             nn.ReLU(),
         )
         self.unet = GinkaUNet(base_ch, num_classes)
@@ -40,7 +43,7 @@ class GinkaModel(nn.Module):
         """
         x = self.fc(feat)
         x = x.view(-1, self.base_ch*8, 4, 4)
-        x = self.deconv_layers(x)
+        x = self.upsample(x)
         x = self.unet(x)
         x = F.interpolate(x, (13, 13), mode='bilinear')
         return x, F.softmax(x, dim=1)

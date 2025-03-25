@@ -294,7 +294,7 @@ def entrance_spatial_constraint(
     return total_loss
 
 class GinkaLoss(nn.Module):
-    def __init__(self, minamo: MinamoModel, weight=[0.5, 0.15, 0.15, 0.1, 0.1]):
+    def __init__(self, minamo: MinamoModel, weight=[0.5, 0.1, 0.1, 0.2, 0.1]):
         """Ginka Model 损失函数部分
 
         Args:
@@ -335,7 +335,7 @@ class GinkaLoss(nn.Module):
         
         losses = [
             minamo_loss * self.weight[0],
-            border_loss * self.weight[1] * 0.1,
+            border_loss * self.weight[1],
             entrance_loss * self.weight[2],
             count_loss * self.weight[3],
             illegal_loss * self.weight[4]
