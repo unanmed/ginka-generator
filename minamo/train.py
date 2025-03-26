@@ -91,8 +91,6 @@ def train():
             graph1 = graph1.to(device)
             graph2 = graph2.to(device)
             
-            # print(map1.shape, map2.shape)
-            
             # 前向传播
             optimizer.zero_grad()
             vision_feat1, topo_feat1 = model(map1, graph1)

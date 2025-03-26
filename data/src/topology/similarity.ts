@@ -62,7 +62,7 @@ function weisfeilerLehmanIteration(
             
             const compositeLabel = `${node.currentLabel}|${neighborLabels.join(
                 ','
-            )}`.slice(0, 4096);
+            )}`.slice(0, 8192);
 
             newLabels.push(compositeLabel);
         });
@@ -157,7 +157,7 @@ export function overallSimilarity(
             const min = Math.min(ga.graph.size, gb.graph.size);
             const iterations = Math.ceil(Math.max(1, Math.log(min)));
             const similarity = wlKernel(ga, gb, iterations);
-            if (similarity > maxSimilarity) {
+            if (similarity > maxSimilarity && !isNaN(similarity)) {
                 maxSimilarity = similarity;
                 maxGraph = gb;
             }
@@ -171,5 +171,9 @@ export function overallSimilarity(
     const reduction =
         1 / (1 + Math.abs(a.unreachable.size - b.unreachable.size));
     // 取根号使结果更接近线性
-    return Math.sqrt(totalSimilarity / graphsA.length) * reduction;
+    if (graphsA.length === 0) {
+        return 0;
+    } else {
+        return Math.sqrt(totalSimilarity / graphsA.length) * reduction;
+    }
 }

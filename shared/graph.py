@@ -1,7 +1,6 @@
 import torch
 from torch_geometric.data import Data, Batch
 
-
 def differentiable_convert_to_data(map_probs: torch.Tensor) -> Data:
     """
     可导的图结构转换（返回 PyG Data 对象）

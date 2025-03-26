@@ -206,6 +206,7 @@ function generateSimilarData(id: string, map: number[][]) {
         const id2 = `${id}.S${i}`;
         const sid = `${id}:${id2}`;
         const simi = compareMap(id, id2, map, clone);
+        
         res.push([
             sid,
             {

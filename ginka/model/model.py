@@ -2,49 +2,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .unet import GinkaUNet
-from .sample import MapDownSample
+from .input import GinkaInput
+from .output import GinkaOutput
 
 class GinkaModel(nn.Module):
     def __init__(self, feat_dim=1024, base_ch=64, num_classes=32):
         """Ginka Model 模型定义部分
         """
         super().__init__()
-        self.base_ch = base_ch
-        fc_dim = base_ch * 8 * 4 * 4
-        self.fc = nn.Sequential(
-            nn.Linear(feat_dim, fc_dim),
-            nn.BatchNorm1d(fc_dim),
-            nn.ReLU()
-        )
-        self.upsample = nn.Sequential(
-            nn.Conv2d(base_ch*8, base_ch*16, kernel_size=3, stride=1, padding=1),
-            nn.PixelShuffle(2),
-            nn.InstanceNorm2d(base_ch*4),
-            nn.ReLU(),
-            nn.Conv2d(base_ch*4, base_ch*8, kernel_size=3, stride=1, padding=1),
-            nn.PixelShuffle(2),
-            nn.InstanceNorm2d(base_ch*2),
-            nn.ReLU(),
-            nn.Conv2d(base_ch*2, base_ch*4, kernel_size=3, stride=1, padding=1),
-            nn.PixelShuffle(2),
-            nn.InstanceNorm2d(base_ch),
-            nn.ReLU(),
-        )
+        self.input = GinkaInput(feat_dim, base_ch)
         self.unet = GinkaUNet(base_ch, num_classes)
-        self.down_sample = MapDownSample(num_classes, num_classes)
-        self.pool = nn.AdaptiveMaxPool2d((13, 13))
+        self.output = GinkaOutput(num_classes, (13, 13))
+        print(f"Input parameters: {sum(p.numel() for p in self.input.parameters())}")
+        print(f"UNet parameters: {sum(p.numel() for p in self.unet.parameters())}")
+        print(f"Output parameters: {sum(p.numel() for p in self.output.parameters())}")
+        print(f"Total parameters: {sum(p.numel() for p in self.parameters())}")
         
-    def forward(self, feat):
+    def forward(self, x):
         """
         Args:
             feat: 参考地图的特征向量
         Returns:
             logits: 输出logits [BS, num_classes, H, W]
         """
-        x = self.fc(feat)
-        x = x.view(-1, self.base_ch*8, 4, 4)
-        x = self.upsample(x)
+        x = self.input(x)
         x = self.unet(x)
-        x = F.interpolate(x, (13, 13), mode='bilinear')
+        x = self.output(x)
         return x, F.softmax(x, dim=1)
     

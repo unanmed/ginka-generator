@@ -21,11 +21,11 @@ class GinkaEncoder(nn.Module):
             elif block == 'SEBlock':
                 self.conv.append(SEBlock(out_channels))
         self.conv.append(nn.GELU())
-        self.pool = nn.MaxPool2d(2)
+        self.down = nn.Conv2d(out_channels, out_channels, 3, stride=2, padding=1)
 
     def forward(self, x):
         x_res = self.conv(x)
-        x_down = self.pool(x_res)
+        x_down = self.down(x_res)
         return x_down, x_res
     
 class GinkaDecoder(nn.Module):
@@ -53,23 +53,24 @@ class GinkaDecoder(nn.Module):
         return x
     
 class GinkaBottleneck(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, attention=False):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
             nn.InstanceNorm2d(out_channels),
             nn.GELU(),
-            SEBlock(out_channels),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.InstanceNorm2d(out_channels),
-            nn.GELU(),
         )
+        if attention:
+            self.conv.append(SEBlock(out_channels))
+        self.conv.append(nn.GELU())
 
     def forward(self, x):
         return self.conv(x)
 
 class GinkaUNet(nn.Module):
-    def __init__(self, in_ch=32, out_ch=32):
+    def __init__(self, in_ch=64, out_ch=32):
         """Ginka Model UNet 部分
         """
         super().__init__()
@@ -78,7 +79,7 @@ class GinkaUNet(nn.Module):
         self.down3 = GinkaEncoder(in_ch*4, in_ch*8, attention=True, block='SEBlock')
         self.down4 = GinkaEncoder(in_ch*8, in_ch*16, attention=True, block='SEBlock')
 
-        self.bottleneck = GinkaBottleneck(in_ch*16, in_ch*16)
+        self.bottleneck = GinkaBottleneck(in_ch*16, in_ch*16, attention=True)
 
         self.up1 = GinkaDecoder(in_ch*16, in_ch*8, attention=True, block='SEBlock')
         self.up2 = GinkaDecoder(in_ch*8, in_ch*4, attention=True, block='SEBlock')
@@ -97,9 +98,9 @@ class GinkaUNet(nn.Module):
 
         x = self.bottleneck(x_down4)
 
-        x = self.up1(x, skip4)  # 用 down2 的 skip
-        x = self.up2(x, skip3)  # 用 down2 的 skip
-        x = self.up3(x, skip2)  # 用 down1 的 skip
-        x = self.up4(x, skip1)  # 用 down1 的 skip
+        x = self.up1(x, skip4)
+        x = self.up2(x, skip3)
+        x = self.up3(x, skip2)
+        x = self.up4(x, skip1)
         
         return self.final(x)
