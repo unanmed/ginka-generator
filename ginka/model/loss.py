@@ -116,8 +116,8 @@ def adaptive_count_loss(
     target_map: torch.Tensor,
     class_list: list = list(range(32)),
     margin_ratio: float = 0.2,
-    zero_margin_scale: float = 0.3,
-    eps: float = 1e-6
+    zero_margin_scale: float = 0.2,
+    eps: float = 1e-3
 ) -> torch.Tensor:
     """
     自适应图块数量约束损失函数

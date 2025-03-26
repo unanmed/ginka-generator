@@ -30,13 +30,13 @@ class GinkaDataset(Dataset):
         item = self.data[idx]
         
         target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        target = random_smooth_onehot(target).to(self.device)
-        graph = differentiable_convert_to_data(target).to(self.device)
+        target_smooth = random_smooth_onehot(target).to(self.device)
+        graph = differentiable_convert_to_data(target_smooth).to(self.device)
         vision_feat, topo_feat = self.minamo(target.unsqueeze(0), graph)
         
         return {
             "target_vision_feat": vision_feat,
             "target_topo_feat": topo_feat,
-            "target": target
+            "target": target,
         }
         
