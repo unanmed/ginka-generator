@@ -2,7 +2,7 @@
 python3 -m minamo.train --epochs 10 --resume true
 python3 -m minamo.train --epochs 10 --resume true --train "datasets/minamo-dataset-1.json" --validate "datasets/minamo-eval-1.json"
 python3 -m minamo.train --epochs 10 --resume true
-python3 -m ginka.train --epochs 10 --resume true
+python3 -m ginka.train --epochs 30 --resume true
 python3 -m ginka.validate
 # 训练完毕，处理数据
 mv "minamo-dataset.json" "datasets/minamo-dataset-$1.json"
