@@ -29,9 +29,9 @@ class MinamoDataset(Dataset):
         map1_probs = F.one_hot(torch.LongTensor(item['map1']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
         map2_probs = F.one_hot(torch.LongTensor(item['map2']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
         
-        min_main = random.uniform(0.7, 1)
-        max_main = random.uniform(0.9, 1)
-        epsilon = random.uniform(0, 0.3)
+        min_main = random.uniform(0.6, 1)
+        max_main = random.uniform(0.8, 1)
+        epsilon = random.uniform(0, 0.4)
         
         map1_probs = random_smooth_onehot(map1_probs, min_main, max_main, epsilon)
         map2_probs = random_smooth_onehot(map2_probs, min_main, max_main, epsilon)

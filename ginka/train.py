@@ -75,7 +75,7 @@ def train():
             feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
             # 前向传播
             optimizer.zero_grad()
-            noise = torch.randn((BATCH_SIZE, 1, 32, 32))
+            noise = torch.randn((target.shape[0], 1, 32, 32)).to(device)
             _, output_softmax = model(noise, feat_vec)
             
             # 计算损失
@@ -108,7 +108,8 @@ def train():
                     feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
                     
                     # 前向传播
-                    output, output_softmax = model(feat_vec)
+                    noise = torch.randn((target.shape[0], 1, 32, 32)).to(device)
+                    output, output_softmax = model(noise, feat_vec)
                     print(torch.argmax(output, dim=1)[0])
                     
                     # 计算损失
