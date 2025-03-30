@@ -10,13 +10,11 @@ from .dataset import GinkaDataset
 from minamo.model.model import MinamoModel
 from shared.args import parse_arguments
 
+BATCH_SIZE = 32
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/ginka_checkpoint", exist_ok=True)
-
-# 在生成器输出后添加梯度检查钩子
-def grad_hook(module, grad_input, grad_output):
-    print(f"Generator output grad norm: {grad_output[0].norm().item()}")
 
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
@@ -29,21 +27,18 @@ def train():
     minamo.load_state_dict(torch.load("result/minamo.pth", map_location=device)["model_state"])
     minamo.to(device)
     minamo.eval()
-    
-    # for param in minamo.parameters():
-    #     param.requires_grad = False
 
     # 准备数据集
     dataset = GinkaDataset(args.train, device, minamo)
     dataset_val = GinkaDataset(args.validate, device, minamo)
     dataloader = DataLoader(
         dataset,
-        batch_size=32,
+        batch_size=BATCH_SIZE,
         shuffle=True
     )
     dataloader_val = DataLoader(
         dataset_val,
-        batch_size=32,
+        batch_size=BATCH_SIZE,
         shuffle=True
     )
     
@@ -52,9 +47,6 @@ def train():
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     criterion = GinkaLoss(minamo)
     
-    # model.register_full_backward_hook(grad_hook)
-    # converter.register_full_backward_hook(grad_hook)
-    # criterion.register_full_backward_hook(grad_hook)
     if args.resume:
         data = torch.load(args.from_state, map_location=device)
         model.load_state_dict(data["model_state"])
@@ -83,29 +75,19 @@ def train():
             feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
             # 前向传播
             optimizer.zero_grad()
-            _, output_softmax = model(feat_vec)
+            noise = torch.randn((BATCH_SIZE, 1, 32, 32))
+            _, output_softmax = model(noise, feat_vec)
             
             # 计算损失
             scaled_losses, losses = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
             
             # 反向传播
-            scaled_losses.backward()
+            losses.backward()
             optimizer.step()
             total_loss += losses.item()
-            # for name, param in model.named_parameters():
-            #     if param.grad is not None:
-            #         print(f"{name}: grad_mean={param.grad.abs().mean():.3e}, max={param.grad.abs().max():.3e}")
             
         avg_loss = total_loss / len(dataloader)
         tqdm.write(f"[INFO {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | loss: {avg_loss:.6f} | lr: {(optimizer.param_groups[0]['lr']):.6f}")
-        
-        # total_norm = 0
-        # for p in model.parameters():
-        #     if p.grad is not None:
-        #         param_norm = p.grad.detach().data.norm(2)
-        #         total_norm += param_norm.item() ** 2
-        # total_norm = total_norm ** 0.5
-        # tqdm.write(f"Gradient Norm: {total_norm:.4f}")  # 正常应保持在1~100之间
         
         # for name, param in model.named_parameters():
         #     if param.grad is not None:

@@ -16,24 +16,6 @@ os.makedirs("result", exist_ok=True)
 os.makedirs("result/minamo_checkpoint", exist_ok=True)
 disable_tqdm = not sys.stdout.isatty()  # 如果 stdout 被重定向，则禁用 tqdm
 
-def collate_fn(batch):
-    """动态处理不同尺寸地图的批处理"""
-    map1_batch = [item[0] for item in batch]
-    map2_batch = [item[1] for item in batch]
-    vis_sim = torch.cat([item[2] for item in batch])
-    topo_sim = torch.cat([item[3] for item in batch])
-    
-    # 保持批次内地图尺寸一致（根据问题描述）
-    assert all(m.shape == map1_batch[0].shape for m in map1_batch), \
-           "对比地图必须尺寸相同"
-    
-    return (
-        torch.stack(map1_batch),  # (B, H, W)
-        torch.stack(map2_batch),  # (B, H, W)
-        vis_sim,
-        topo_sim
-    )
-
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
     
@@ -90,6 +72,9 @@ def train():
             vision_simi = vision_simi.to(device)
             graph1 = graph1.to(device)
             graph2 = graph2.to(device)
+            
+            if map1.shape[0] == 1:
+                continue
             
             # 前向传播
             optimizer.zero_grad()

@@ -1,4 +1,5 @@
 import json
+import random
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
@@ -28,8 +29,12 @@ class MinamoDataset(Dataset):
         map1_probs = F.one_hot(torch.LongTensor(item['map1']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
         map2_probs = F.one_hot(torch.LongTensor(item['map2']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
         
-        map1_probs = random_smooth_onehot(map1_probs)
-        map2_probs = random_smooth_onehot(map2_probs)
+        min_main = random.uniform(0.7, 1)
+        max_main = random.uniform(0.9, 1)
+        epsilon = random.uniform(0, 0.3)
+        
+        map1_probs = random_smooth_onehot(map1_probs, min_main, max_main, epsilon)
+        map2_probs = random_smooth_onehot(map2_probs, min_main, max_main, epsilon)
         
         graph1 = differentiable_convert_to_data(map1_probs)
         graph2 = differentiable_convert_to_data(map2_probs)

@@ -117,71 +117,77 @@ def adaptive_count_loss(
     class_list: list = list(range(32)),
     margin_ratio: float = 0.2,
     zero_margin_scale: float = 0.2,
+    lambda_entropy: float = 0.05,
+    lambda_local: float = 0.1,
+    grid_size: int = 8,
     eps: float = 1e-3
 ) -> torch.Tensor:
     """
-    自适应图块数量约束损失函数
+    改进版自适应图块数量约束损失，包含局部匹配和熵约束
     
-    参数:
-        pred_probs: 预测概率分布 [B, C, H, W]
-        target_map: 真实地图 [B, C, H, W]
-        class_list: 需要约束的类别列表
-        margin_ratio: 允许的相对误差范围（如0.2表示±20%）
-        zero_margin_scale: 参考数量为0时的允许余量系数（余量=scale*sqrt(H*W))
-        eps: 数值稳定性常数
-    
-    返回:
-        loss: 标量损失值
     """
     B, C, H, W = pred_probs.shape
     device = pred_probs.device
     total_loss = 0.0
     valid_classes = 0
     
-    # 预计算地图面积用于余量计算
+    # 预计算地图面积
     map_area = math.sqrt(H * W)
     
+    # 计算最小非零类别概率
+    min_nonzero_prob = pred_probs[:, class_list].max(dim=1).values.mean()  # 获取预测中的最小非零概率
+    dynamic_zero_margin = zero_margin_scale * min_nonzero_prob * map_area  # 让零类别不被填充
+
     for cls in class_list:
-        # 预测数量（概率和）
-        pred_count = pred_probs[:, cls].sum(dim=(1,2))  # [B]
-        # 真实数量
-        true_count = target_map[:, cls].sum(dim=(1,2))  # [B]
+        pred_count = pred_probs[:, cls].sum(dim=(1,2))  # 预测类别数量
+        true_count = target_map[:, cls].sum(dim=(1,2))  # 真实类别数量
         
-        # 动态容差计算
-        with torch.no_grad():
-            # 当真实数量为0时的允许上限
-            zero_mask = (true_count == 0)
-            dynamic_margin = torch.where(
-                zero_mask,
-                zero_margin_scale * map_area,  # 允许存在少量
-                margin_ratio * true_count      # 相对误差范围
-            )
+        zero_mask = (true_count == 0)
+        dynamic_margin = torch.where(
+            zero_mask,
+            dynamic_zero_margin,  
+            margin_ratio * true_count  
+        )
         
-        # 误差计算（考虑数值稳定性）
-        safe_true = true_count + eps * zero_mask  # 零真实值时添加微小量
+        safe_true = true_count + eps * zero_mask
         abs_error = torch.abs(pred_count - true_count)
         rel_error = abs_error / safe_true
         
-        # 双阶段损失函数
-        # 阶段一：误差在容差范围内时使用二次函数（强梯度）
-        # 阶段二：超出容差时转为线性（稳定训练）
         loss_per_class = torch.where(
             abs_error <= dynamic_margin,
-            (rel_error ** 2) * 0.5,        # 区间内强梯度
-            rel_error - (0.5 * margin_ratio)  # 区间外稳定梯度
+            (rel_error ** 2) * 0.8 + 0.2 * rel_error,  
+            rel_error - (0.5 * margin_ratio)
         )
         
-        # 零真实值特殊处理：仅惩罚超出余量部分
         loss_per_class = torch.where(
             zero_mask,
-            F.relu(abs_error - dynamic_margin) / map_area,  # 归一化处理
+            F.relu(abs_error - dynamic_margin) / map_area,
             loss_per_class
         )
         
         total_loss += loss_per_class.mean()
         valid_classes += 1
     
-    return total_loss / valid_classes  # 类别平均
+    # 平均类别损失
+    total_loss /= valid_classes  
+    
+    # 加入负熵约束，防止类别均匀化
+    def entropy_loss(pred_probs):
+        avg_probs = pred_probs.mean(dim=(2, 3))
+        entropy = -torch.sum(avg_probs * torch.log(avg_probs + 1e-6), dim=1)
+        return entropy.mean()
+
+    total_loss += lambda_entropy * entropy_loss(pred_probs)
+
+    # 加入局部类别匹配
+    def local_count_loss(pred_probs, target_probs, grid_size=8):
+        pred_local = F.avg_pool2d(pred_probs, kernel_size=grid_size, stride=grid_size)
+        target_local = F.avg_pool2d(target_probs, kernel_size=grid_size, stride=grid_size)
+        return F.mse_loss(pred_local, target_local)
+
+    total_loss += lambda_local * local_count_loss(pred_probs, target_map, grid_size)
+
+    return total_loss
 
 def illegal_tile_loss(
     pred_probs: torch.Tensor, 
