@@ -49,7 +49,7 @@ def train():
     
     if args.resume:
         data = torch.load(args.from_state, map_location=device)
-        model.load_state_dict(data["model_state"])
+        model.load_state_dict(data["model_state"], strict=False)
         if args.load_optim:
             optimizer.load_state_dict(data["optimizer_state"])
         print("Train from loaded state.")

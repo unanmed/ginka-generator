@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 class MinamoLoss(nn.Module):
-    def __init__(self, vision_weight=0.4, topo_weight=0.6):
+    def __init__(self, vision_weight=0.2, topo_weight=0.8):
         super().__init__()
         self.vision_weight = vision_weight
         self.topo_weight = topo_weight

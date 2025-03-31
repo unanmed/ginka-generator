@@ -8,12 +8,12 @@ def print_memory(tag=""):
     print(f"{tag} | 当前显存: {torch.cuda.memory_allocated() / 1024**2:.2f} MB, 最大显存: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB")
 
 class GinkaModel(nn.Module):
-    def __init__(self, feat_dim=1024, base_ch=64, num_classes=32):
+    def __init__(self, feat_dim=1024, base_ch=64, out_ch=32):
         """Ginka Model 模型定义部分
         """
         super().__init__()
-        self.unet = GinkaUNet(1, base_ch, num_classes, feat_dim)
-        self.output = GinkaOutput(num_classes, (13, 13))
+        self.unet = GinkaUNet(1, base_ch, out_ch, feat_dim)
+        self.output = GinkaOutput(out_ch, out_ch, (13, 13))
         
     def forward(self, x, feat):
         """
