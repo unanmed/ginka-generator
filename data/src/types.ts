@@ -11,3 +11,33 @@ export interface TowerInfo {
     floorIds: string[];
     config: BaseConfig;
 }
+
+export interface GinkaConfig extends BaseConfig {
+    data: Record<string, string[]>;
+}
+
+export interface GinkaTrainData {
+    text: string[];
+    map: number[][];
+    size: [number, number];
+}
+
+export interface GinkaDataset {
+    datasetId: number;
+    data: Record<string, GinkaTrainData>;
+}
+
+export interface MinamoConfig extends BaseConfig {}
+
+export interface MinamoTrainData {
+    map1: number[][];
+    map2: number[][];
+    topoSimilarity: number;
+    visionSimilarity: number;
+    size: [number, number];
+}
+
+export interface MinamoDataset {
+    datasetId: number;
+    data: Record<string, MinamoTrainData>;
+}

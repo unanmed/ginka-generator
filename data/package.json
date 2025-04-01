@@ -8,6 +8,7 @@
         "minamo": "tsx ./src/minamo.ts",
         "merge": "tsx ./src/merge.ts",
         "review": "tsx ./src/review.ts",
+        "gan": "tsx ./src/gan.ts",
         "test:topo": "tsx ./src/topology/test.ts",
         "test:vision": "tsx ./src/vision/test.ts"
     },

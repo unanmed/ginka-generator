@@ -1,4 +1,5 @@
 import json
+import random
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
@@ -15,6 +16,12 @@ def load_data(path: str):
         data_list.append(value)
         
     return data_list
+
+def load_minamo_gan_data(data: list):
+    res = list()
+    for one in data:
+        res.append((one['map1'], one['map2'], one['visionSimilarity'], one['topoSimilarity'], True))
+    return res
 
 class GinkaDataset(Dataset):
     def __init__(self, data_path: str, device, minamo: MinamoModel):
@@ -41,3 +48,44 @@ class GinkaDataset(Dataset):
             "target": target,
         }
         
+class MinamoGANDataset(Dataset):
+    def __init__(self, refer_data_path):
+        self.refer = load_minamo_gan_data(load_data(refer_data_path))
+        self.data = list().extend(self.refer)
+        
+    def set_data(self, data: list):
+        self.data = data.extend(self.refer)
+        
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        
+        map1, map2, vis_sim, topo_sim, review = item
+        map1 = torch.ShortTensor(map1)
+        map2 = torch.ShortTensor(map2)
+        # 检查是否有 review 标签，没有的话说明是概率分布，不需要任何转换
+        if review:
+            map1 = F.one_hot(map1, num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+        map2 = F.one_hot(map2, num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+        
+        min_main = random.uniform(0.75, 0.9)
+        max_main = random.uniform(0.9, 1)
+        epsilon = random.uniform(0, 0.25)
+        
+        if review:
+            map1 = random_smooth_onehot(map1, min_main, max_main, epsilon)
+        map2 = random_smooth_onehot(map2, min_main, max_main, epsilon)
+        
+        graph1 = differentiable_convert_to_data(map1)
+        graph2 = differentiable_convert_to_data(map2)
+        
+        return (
+            map1,
+            map2,
+            torch.FloatTensor([vis_sim]),
+            torch.FloatTensor([topo_sim]),
+            graph1,
+            graph2
+        )

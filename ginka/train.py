@@ -78,7 +78,7 @@ def train():
             _, output_softmax = model(feat_vec)
             
             # 计算损失
-            scaled_losses, losses = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
+            losses = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
             
             # 反向传播
             losses.backward()
@@ -111,7 +111,7 @@ def train():
                     print(torch.argmax(output, dim=1)[0])
                     
                     # 计算损失
-                    scaled_losses, losses = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
+                    losses = criterion(output_softmax, target, target_vision_feat, target_topo_feat)
                     loss_val += losses.item()
             
             avg_val_loss = loss_val / len(dataloader_val)

@@ -1,4 +1,5 @@
 import math
+from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -253,11 +254,8 @@ class GinkaLoss(nn.Module):
         minamo_sim = 0.2 * vision_sim + 0.8 * topo_sim
         minamo_loss = (1.0 - minamo_sim).mean()
         
-        print(
-            minamo_loss.item(),
-            class_loss.item(),
-            entrance_loss.item(),
-            count_loss.item()
+        tqdm.write(
+            f"{minamo_loss.item():.8f}, {class_loss.item():.8f}, {entrance_loss.item():.8f}, {count_loss.item():.8f}"
         )
         
         losses = [
@@ -267,7 +265,4 @@ class GinkaLoss(nn.Module):
             count_loss * self.weight[3]
         ]
     
-        # 梯度归一化
-        scaled_losses = [loss / (loss.detach() + 1e-6) for loss in losses]
-        total_loss = sum(scaled_losses)
-        return total_loss, sum(losses)
+        return sum(losses)
