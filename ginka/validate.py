@@ -108,8 +108,7 @@ def validate():
             target_topo_feat = batch["target_topo_feat"].to(device)
             feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
             # 前向传播
-            noise = torch.randn((target.shape[0], 1, 32, 32)).to(device)
-            output, output_softmax = model(noise, feat_vec)
+            output, output_softmax = model(feat_vec)
             map_matrix = torch.argmax(output, dim=1)
             
             for matrix in map_matrix[:].cpu():

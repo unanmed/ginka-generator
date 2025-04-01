@@ -86,7 +86,7 @@ def _create_distance_kernel(size):
     dist = torch.sqrt((x - center)**2 + (y - center)**2)
     kernel = 1 / (dist + 1)
     kernel /= kernel.sum()  # 归一化
-    return kernel.unsqueeze(0).unsqueeze(0), 1 / kernel.sum()  # [1,1,H,W]
+    return kernel.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
 
 def entrance_constraint_loss(
     pred: torch.Tensor,
@@ -123,15 +123,13 @@ def entrance_constraint_loss(
     center_weight = center_weight.clamp(0,1).to(pred.device)  # [H,W]
 
     # 概率密度感知的间距计算
-    kernel, cw = _create_distance_kernel(min_distance)  # 自定义函数生成权重核
+    kernel = _create_distance_kernel(min_distance)  # 自定义函数生成权重核
     kernel = kernel.to(pred.device)
     density_map = F.conv2d(entrance_probs.unsqueeze(1), kernel, padding=min_distance-1)
     
     spacing_loss = density_map.mean()
 
-    ###########################
     # 区域加权综合损失
-    ###########################
     total_loss = (
         lambda_presence * presence_loss +
         lambda_spacing * (spacing_loss * center_weight).mean()
@@ -225,116 +223,6 @@ def adaptive_count_loss(
 
     return total_loss
 
-def illegal_tile_loss(
-    pred_probs: torch.Tensor, 
-    legal_classes: int = 13, 
-    temperature: float = 0.1,
-    eps: float = 1e-8
-) -> torch.Tensor:
-    """
-    非法图块惩罚损失函数
-    
-    参数:
-        pred_probs: 模型输出的概率分布 [B, C, H, W]
-        legal_classes: 合法图块数量（0-based，默认0-12为合法）
-        temperature: 概率锐化温度系数（0.1-1.0）
-        eps: 数值稳定性保护
-    
-    返回:
-        loss: 标量损失值
-    """
-    B, C, H, W = pred_probs.shape
-    
-    # 提取非法图块概率（类别13及之后）
-    illegal_probs = pred_probs[:, legal_classes:, :, :]  # [B, C_illegal, H, W]
-    
-    # 概率锐化（增强高概率区域的惩罚）
-    sharpened_probs = torch.exp(torch.log(illegal_probs + eps) / temperature)
-    sharpened_probs = sharpened_probs / (sharpened_probs.sum(dim=1, keepdim=True) + eps)
-    
-    # 空间敏感权重（关注高置信度非法区域）
-    with torch.no_grad():
-        # 计算每个像素的非法概率置信度
-        confidence = illegal_probs.max(dim=1)[0]  # [B, H, W]
-        # 生成注意力权重（高置信度区域权重加倍）
-        spatial_weights = 1 + torch.sigmoid(10*(confidence - 0.5))
-    
-    # 逐像素计算非法概率损失
-    per_pixel_loss = torch.log(1 + illegal_probs.sum(dim=1))  # [B, H, W]
-    
-    # 加权空间损失
-    weighted_loss = (per_pixel_loss * spatial_weights).mean()
-    
-    # 类别平衡因子（抑制高频非法类别）
-    class_balance = 1 + torch.var(illegal_probs.mean(dim=(0,2,3)))  # [C_illegal]
-    
-    return weighted_loss * class_balance.mean()
-
-def entrance_spatial_constraint(
-    pred_probs: torch.Tensor, 
-    arrow_class: int = 11, 
-    stair_class: int = 10,
-    border_width: int = 1,
-    lambda_arrow: float = 1.0,
-    lambda_stair: float = 1.0
-) -> torch.Tensor:
-    """
-    入口空间约束损失函数
-    
-    参数:
-        pred_probs: 模型输出的概率分布 [B, C, H, W]
-        arrow_class: 箭头入口类别索引
-        stair_class: 楼梯入口类别索引
-        border_width: 边缘区域宽度（默认1表示最外圈）
-        lambda_arrow: 箭头约束权重
-        lambda_stair: 楼梯约束权重
-    
-    返回:
-        loss: 标量损失值
-    """
-    B, C, H, W = pred_probs.shape
-    
-    ##########################################
-    # 1. 区域掩码生成
-    ##########################################
-    # 生成边缘区域掩码 [H, W]
-    edge_mask = torch.zeros((H, W), dtype=torch.bool, device=pred_probs.device)
-    # 上下边缘
-    edge_mask[:border_width, :] = True
-    edge_mask[-border_width:, :] = True
-    # 左右边缘（排除已标记的角落）
-    edge_mask[:, :border_width] = True
-    edge_mask[:, -border_width:] = True
-    
-    # 生成中间区域掩码 [H, W]
-    center_mask = ~edge_mask
-    
-    ##########################################
-    # 2. 边缘区域约束（只能出现箭头）
-    ##########################################
-    
-    # 抑制边缘出现楼梯的概率 [B, N_edge_pixels]
-    edge_stair_probs = pred_probs[:, stair_class][:, edge_mask]
-    edge_stair_penalty = F.relu(edge_stair_probs - 0.1).mean()  # 允许10%以下
-    
-    ##########################################
-    # 3. 中间区域约束（只能出现楼梯）
-    ##########################################
-    
-    # 抑制中间出现箭头的概率 [B, N_center_pixels]
-    center_arrow_probs = pred_probs[:, arrow_class][:, center_mask]
-    center_arrow_penalty = F.relu(center_arrow_probs - 0.1).mean()  # 允许10%以下
-    
-    ##########################################
-    # 4. 综合损失
-    ##########################################
-    total_loss = (
-        lambda_arrow * edge_stair_penalty +
-        lambda_stair * center_arrow_penalty
-    )
-    
-    return total_loss
-
 class GinkaLoss(nn.Module):
     def __init__(self, minamo: MinamoModel, weight=[0.5, 0.2, 0.1, 0.2]):
         """Ginka Model 损失函数部分
@@ -353,7 +241,7 @@ class GinkaLoss(nn.Module):
     def forward(self, pred, target, target_vision_feat, target_topo_feat):
         # 地图结构损失
         class_loss = outer_border_constraint_loss(pred) + inner_constraint_loss(pred)
-        entrance_loss = entrance_constraint_loss(pred) + entrance_spatial_constraint(pred)
+        entrance_loss = entrance_constraint_loss(pred)
         count_loss = adaptive_count_loss(pred, target)
         
         # 使用 Minamo Model 计算相似度
