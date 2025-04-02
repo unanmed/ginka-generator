@@ -255,7 +255,7 @@ class GinkaLoss(nn.Module):
         minamo_loss = (1.0 - minamo_sim).mean()
         
         tqdm.write(
-            f"{minamo_loss.item():.8f}, {class_loss.item():.8f}, {entrance_loss.item():.8f}, {count_loss.item():.8f}"
+            f"{minamo_loss.item():.12f}, {class_loss.item():.12f}, {entrance_loss.item():.12f}, {count_loss.item():.12f}"
         )
         
         losses = [

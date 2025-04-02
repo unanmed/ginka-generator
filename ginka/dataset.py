@@ -51,10 +51,14 @@ class GinkaDataset(Dataset):
 class MinamoGANDataset(Dataset):
     def __init__(self, refer_data_path):
         self.refer = load_minamo_gan_data(load_data(refer_data_path))
-        self.data = list().extend(self.refer)
+        self.data = list()
+        self.data.extend(random.sample(self.refer, 1000))
         
     def set_data(self, data: list):
-        self.data = data.extend(self.refer)
+        self.data.clear()
+        self.data.extend(data)
+        k = min(len(data) / 4, len(self.refer))
+        self.data.extend(random.sample(self.refer, int(k)))
         
     def __len__(self):
         return len(self.data)
@@ -63,8 +67,8 @@ class MinamoGANDataset(Dataset):
         item = self.data[idx]
         
         map1, map2, vis_sim, topo_sim, review = item
-        map1 = torch.ShortTensor(map1)
-        map2 = torch.ShortTensor(map2)
+        map1 = torch.LongTensor(map1)
+        map2 = torch.LongTensor(map2)
         # 检查是否有 review 标签，没有的话说明是概率分布，不需要任何转换
         if review:
             map1 = F.one_hot(map1, num_classes=32).permute(2, 0, 1).float()  # [32, H, W]

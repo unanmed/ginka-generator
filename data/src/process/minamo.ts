@@ -136,7 +136,7 @@ function generateSimilarData(id: string, map: number[][]) {
     // 生成最多两个微调地图
     const width = map[0].length;
     const height = map.length;
-    const num = Math.floor(Math.random() * 1);
+    const num = Math.floor(Math.random() * 2);
     const res: [id: string, data: MinamoTrainData][] = [];
 
     for (let i = 0; i < num; i++) {
