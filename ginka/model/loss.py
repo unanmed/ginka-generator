@@ -249,9 +249,10 @@ class GinkaLoss(nn.Module):
         graph = batch_convert_soft_map_to_graph(pred)
         pred_vision_feat, pred_topo_feat = self.minamo(pred, graph)
         
-        vision_sim = F.cosine_similarity(pred_vision_feat, target_vision_feat, dim=-1)
-        topo_sim = F.cosine_similarity(pred_topo_feat, target_topo_feat, dim=-1)
-        minamo_sim = 0.2 * vision_sim + 0.8 * topo_sim
+        vision_sim = F.cosine_similarity(pred_vision_feat, target_vision_feat, dim=1)
+        topo_sim = F.cosine_similarity(pred_topo_feat, target_topo_feat, dim=1)
+        minamo_sim = 0 * vision_sim + 1 * topo_sim
+        # tqdm.write(f"{vision_sim.mean().item():.12f}, {topo_sim.mean().item():.12f}")
         minamo_loss = (1.0 - minamo_sim).mean()
         
         tqdm.write(

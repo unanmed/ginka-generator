@@ -35,7 +35,7 @@ function generateGANData(
     map: number[][]
 ) {
     const id2 = `$${id++}`;
-    const toTrain = chooseFrom(keys, 30);
+    const toTrain = chooseFrom(keys, 4);
     const data = toTrain.map<MinamoTrainData[]>(v => {
         const floor = refer.get(v);
         if (!floor) return [];

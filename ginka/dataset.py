@@ -37,7 +37,10 @@ class GinkaDataset(Dataset):
         item = self.data[idx]
         
         target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        target_smooth = random_smooth_onehot(target)
+        min_main = random.uniform(0.75, 0.9)
+        max_main = random.uniform(0.9, 1)
+        epsilon = random.uniform(0, 0.25)
+        target_smooth = random_smooth_onehot(target, min_main, max_main, epsilon)
         graph = differentiable_convert_to_data(target_smooth).to(self.device)
         target = target.to(self.device)
         vision_feat, topo_feat = self.minamo(target.unsqueeze(0), graph)
@@ -67,12 +70,12 @@ class MinamoGANDataset(Dataset):
         item = self.data[idx]
         
         map1, map2, vis_sim, topo_sim, review = item
-        map1 = torch.LongTensor(map1)
-        map2 = torch.LongTensor(map2)
         # 检查是否有 review 标签，没有的话说明是概率分布，不需要任何转换
         if review:
-            map1 = F.one_hot(map1, num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        map2 = F.one_hot(map2, num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+            map1 = F.one_hot(torch.LongTensor(map1), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+        else:
+            map1 = torch.FloatTensor(map1)
+        map2 = F.one_hot(torch.LongTensor(map2), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
         
         min_main = random.uniform(0.75, 0.9)
         max_main = random.uniform(0.9, 1)

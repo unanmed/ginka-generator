@@ -19,7 +19,7 @@ from shared.image import matrix_to_image_cv
 
 BATCH_SIZE = 32
 EPOCHS_GINKA = 30
-EPOCHS_MINAMO = 15
+EPOCHS_MINAMO = 10
 SOCKET_PATH = "./tmp/ginka_uds"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -40,9 +40,9 @@ def parse_arguments():
 
 def parse_ginka_batch(batch):
     target = batch["target"].to(device)
-    target_vision_feat = batch["target_vision_feat"].to(device)
-    target_topo_feat = batch["target_topo_feat"].to(device)
-    feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=-1).to(device).squeeze(1)
+    target_vision_feat = batch["target_vision_feat"].to(device).squeeze(1)
+    target_topo_feat = batch["target_topo_feat"].to(device).squeeze(1)
+    feat_vec = torch.cat([target_vision_feat, target_topo_feat], dim=1).to(device)
     
     return target, target_vision_feat, target_topo_feat, feat_vec
 
@@ -133,8 +133,8 @@ def train():
     minamo_dataset_val = MinamoGANDataset("datasets/minamo-eval-1.json")
     ginka_dataloader = DataLoader(ginka_dataset, batch_size=BATCH_SIZE, shuffle=True)
     ginka_dataloader_val = DataLoader(ginka_dataset_val, batch_size=BATCH_SIZE, shuffle=True)
-    minamo_dataloader = DataLoader(minamo_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    minamo_dataloader_val = DataLoader(minamo_dataset_val, batch_size=BATCH_SIZE, shuffle=True)
+    minamo_dataloader = DataLoader(minamo_dataset, batch_size=BATCH_SIZE // 2, shuffle=True)
+    minamo_dataloader_val = DataLoader(minamo_dataset_val, batch_size=BATCH_SIZE // 2, shuffle=True)
     
     # 设定优化器与调度器
     optimizer_ginka = optim.AdamW(ginka.parameters(), lr=1e-3)
@@ -142,7 +142,7 @@ def train():
     criterion_ginka = GinkaLoss(minamo)
     
     optimizer_minamo = optim.AdamW(minamo.parameters(), lr=1e-3)
-    scheduler_minamo = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_minamo, T_0=5, T_mult=2, eta_min=1e-6)
+    scheduler_minamo = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_minamo, T_0=10, T_mult=2, eta_min=1e-6)
     criterion_minamo = MinamoLoss()
     
     # 用于生成图片
@@ -158,20 +158,18 @@ def train():
     server.bind(SOCKET_PATH)
     server.listen(1)
     
-    print("Waiting for client connection...")
-    conn, _ = server.accept()
-    print("Client connected.")
-    
     if args.resume:
         data = torch.load(args.from_state, map_location=device)
         ginka.load_state_dict(data["model_state"], strict=False)
-        if args.load_optim:
-            optimizer_ginka.load_state_dict(data["optimizer_state"])
         print("Train from loaded state.")
         
     else:
         # 从头开始训练的话，初始时先把 minamo 损失值权重改为 0
         criterion_ginka.weight[0] = 0.0
+        
+    print("Waiting for client connection...")
+    conn, _ = server.accept()
+    print("Client connected.")
     
     for cycle in tqdm(range(args.from_cycle, args.to_cycle), desc="Total Progress"):
         # -------------------- 训练生成器
@@ -217,10 +215,7 @@ def train():
                         loss_val += losses.item()
                         if epoch + 1 == EPOCHS_GINKA:
                             # 最后一次验证的时候顺带生成图片
-                            prob = output_softmax.cpu().numpy()
-                            prob_list = np.concatenate((prob_list, prob), axis=0)
                             map_matrix = torch.argmax(output, dim=1).cpu().numpy()
-                            gen_list = np.concatenate((gen_list, map_matrix), axis=0)
                             for matrix in map_matrix:
                                 image = matrix_to_image_cv(matrix, tile_dict)
                                 cv2.imwrite(f"result/ginka_img/{idx}.png", image)
@@ -231,6 +226,16 @@ def train():
                 torch.save({
                     "model_state": ginka.state_dict()
                 }, f"result/ginka_checkpoint/{epoch + 1}.pth")
+                
+        # 使用训练集生成 minamo 训练数据，更准确
+        with torch.no_grad():
+            for batch in ginka_dataloader:
+                target, target_vision_feat, target_topo_feat, feat_vec = parse_ginka_batch(batch)
+                output, output_softmax = ginka(feat_vec)
+                prob = output_softmax.cpu().numpy()
+                prob_list = np.concatenate((prob_list, prob), axis=0)
+                map_matrix = torch.argmax(output, dim=1).cpu().numpy()
+                gen_list = np.concatenate((gen_list, map_matrix), axis=0)
         
         tqdm.write(f"Cycle {cycle} Ginka train ended.")
         torch.save({
@@ -269,8 +274,8 @@ def train():
                 vision_feat1, topo_feat1 = minamo(map1, graph1)
                 vision_feat2, topo_feat2 = minamo(map2, graph2)
                 
-                vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, -1).unsqueeze(-1)
-                topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, -1).unsqueeze(-1)
+                vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, dim=1).unsqueeze(-1)
+                topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, dim=1).unsqueeze(-1)
                 
                 # 计算损失
                 loss = criterion_minamo(vision_pred, topo_pred, vision_simi, topo_simi)
@@ -296,8 +301,8 @@ def train():
                         vision_feat1, topo_feat1 = minamo(map1_val, graph1)
                         vision_feat2, topo_feat2 = minamo(map2_val, graph2)
                 
-                        vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, -1).unsqueeze(-1)
-                        topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, -1).unsqueeze(-1)
+                        vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, dim=1).unsqueeze(-1)
+                        topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, dim=1).unsqueeze(-1)
                         
                         # 计算损失
                         loss_val = criterion_minamo(vision_pred, topo_pred, vision_simi_val, topo_simi_val)
@@ -312,7 +317,7 @@ def train():
         tqdm.write(f"Cycle {cycle} Minamo train ended.")
         torch.save({
             "model_state": minamo.state_dict()
-        }, f"result/ginka.pth")
+        }, f"result/minamo.pth")
         
     print("Train ended.")
 
