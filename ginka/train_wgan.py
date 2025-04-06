@@ -38,7 +38,7 @@ def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
     
     c_steps = 1
-    g_steps = 3
+    g_steps = 4
     
     args = parse_arguments()
     
@@ -103,9 +103,9 @@ def train():
             for _ in range(g_steps):
                 z1 = torch.randn(batch_size, 1024, device=device)
                 z2 = torch.randn(batch_size, 1024, device=device)
-                fake_softmax1, fakse_softmax2 = ginka(z1), ginka(z2)
+                fake_softmax1, fake_softmax2 = ginka(z1), ginka(z2)
                 
-                loss_g = criterion.generator_loss(minamo, fake_softmax1, fakse_softmax2)
+                loss_g = criterion.generator_loss(minamo, fake_softmax1, fake_softmax2)
                 loss_g.backward()
                 optimizer_ginka.step()
                 
@@ -120,13 +120,18 @@ def train():
         )
         
         if avg_dis < -9:
-            g_steps = 7
+            g_steps = 21
         elif avg_dis < -6:
-            g_steps = 5
+            g_steps = 14
         elif avg_dis < -3:
-            g_steps = 3
+            g_steps = 7
         else:
             g_steps = 1
+        
+        if avg_dis > 3:
+            c_steps = 3
+        else:
+            c_steps = 1
         
         # 每五轮输出一次图片，并保存检查点
         if (epoch + 1) % 5 == 0:

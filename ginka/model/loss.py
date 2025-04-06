@@ -311,7 +311,7 @@ def js_divergence(P, Q, epsilon=1e-10):
     return js.mean()  # 标量
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=10, weight=[0.7, 0.2, 0.1], diversity_lamda=0):
+    def __init__(self, lambda_gp=20, weight=[0.7, 0.2, 0.1], diversity_lamda=0):
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
         self.diversity_lamda = diversity_lamda
