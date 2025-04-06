@@ -87,8 +87,7 @@ function weisfeilerLehmanIteration(
         });
         weight *= decay;
     });
-    // 把每个节点的原始标签也加上，权重使用最远权重再衰减1次，可以认为是资源重复率
-    weight *= decay;
+    // 把每个节点的原始标签也加上，权重使用最远权重，可以认为是资源重复率
     nodes.forEach(node => {
         if (!numMap.has(node.originalLabel)) {
             numMap.set(node.originalLabel, weight);

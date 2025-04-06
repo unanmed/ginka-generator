@@ -3,8 +3,10 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.data import Data
 from minamo.model.model import MinamoModel
 from shared.graph import batch_convert_soft_map_to_graph
+from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
 
 CLASS_NUM = 32
 ILLEGAL_MAX_NUM = 12
@@ -260,10 +262,129 @@ class GinkaLoss(nn.Module):
         )
         
         losses = [
-            minamo_loss * self.weight[0],
+            minamo_loss * self.weight[0] * 4,
             class_loss * self.weight[1],
             entrance_loss * self.weight[2],
             count_loss * self.weight[3]
         ]
     
         return sum(losses)
+    
+# 对图像数据进行插值
+def interpolate_data(real_data, fake_data, epsilon):
+    return epsilon * real_data + (1 - epsilon) * fake_data
+
+# 对节点特征进行插值，但保持边连接关系不变
+def interpolate_graph_features(real_graph, fake_graph, epsilon=0.5):
+    # 插值节点特征
+    x_real, x_fake = real_graph.x, fake_graph.x
+    x_interp = epsilon * x_real + (1 - epsilon) * x_fake
+    
+    # 保持边连接关系和边特征不变
+    edge_index_interp = real_graph.edge_index  # 保持边连接关系
+    edge_attr_interp = real_graph.edge_attr  # 如果有边特征，保持不变
+    
+    return Data(x=x_interp, edge_index=edge_index_interp, edge_attr=edge_attr_interp)
+    
+def js_divergence(P, Q, epsilon=1e-10):
+    """
+    输入:
+        P, Q: [B, C, H, W], 已通过 Softmax 处理
+    输出:
+        JS 散度标量（全局平均）
+    """
+    # 转换为 [B, H, W, C] 以便在最后一维计算概率分布
+    P = P.permute(0, 2, 3, 1)  # [B, H, W, C]
+    Q = Q.permute(0, 2, 3, 1)
+    
+    # 平均分布 M = (P + Q)/2
+    M = 0.5 * (P + Q)
+    
+    # 计算 KL(P||M) 和 KL(Q||M)
+    kl_pm = F.kl_div(torch.log(M + epsilon), P, reduction='none', log_target=False).sum(dim=-1)  # [B, H, W]
+    kl_qm = F.kl_div(torch.log(M + epsilon), Q, reduction='none', log_target=False).sum(dim=-1)  # [B, H, W]
+    
+    # JS 散度 = 0.5*(KL(P||M) + KL(Q||M))
+    js = 0.5 * (kl_pm + kl_qm)
+    
+    # 全局平均（可替换为其他聚合方式）
+    return js.mean()  # 标量
+
+class WGANGinkaLoss:
+    def __init__(self, lambda_gp=10, weight=[0.7, 0.2, 0.1], diversity_lamda=0):
+        self.lambda_gp = lambda_gp  # 梯度惩罚系数
+        self.weight = weight
+        self.diversity_lamda = diversity_lamda
+        
+    def compute_gradient_penalty(self, critic, real_data, fake_data):
+        # 进行插值
+        batch_size = real_data.size(0)
+        epsilon_data = torch.randn(batch_size, 1, 1, 1, device=real_data.device)
+        interp_data = interpolate_data(real_data, fake_data, epsilon_data)
+        interp_graph = batch_convert_soft_map_to_graph(interp_data)
+        
+        # 对图像进行反向传播并计算梯度
+        interp_data.requires_grad_()
+        interp_graph.x.requires_grad_()
+        
+        _, d_vis_score, d_topo_score = critic(interp_data, interp_graph)
+        
+        # 计算梯度
+        grad_vis = torch.autograd.grad(
+            outputs=d_vis_score, inputs=interp_data,
+            grad_outputs=torch.ones_like(d_vis_score),
+            create_graph=True, retain_graph=True, only_inputs=True
+        )[0]
+        grad_topo = torch.autograd.grad(
+            outputs=d_topo_score, inputs=interp_graph.x,
+            grad_outputs=torch.ones_like(d_topo_score),
+            create_graph=True, retain_graph=True, only_inputs=True
+        )[0]
+
+        # 计算梯度的 L2 范数
+        grad_norm_vis = grad_vis.view(batch_size, -1).norm(2, dim=1)
+        grad_norm_topo = grad_topo.view(batch_size, -1).norm(2, dim=1)
+        # 计算梯度惩罚项
+        gp_loss_vis = ((grad_norm_vis - 1.0) ** 2).mean()
+        gp_loss_topo = ((grad_norm_topo - 1.0) ** 2).mean()
+        gp_loss = gp_loss_vis * VISION_WEIGHT + gp_loss_topo * TOPO_WEIGHT
+        # print(grad_norm_topo.mean().item(), grad_norm_vis.mean().item())
+
+        return gp_loss
+        
+    def discriminator_loss(
+        self, critic, real_data: torch.Tensor, 
+        real_graph: torch.Tensor, fake_data: torch.Tensor
+    ):
+        """ 判别器损失函数 """
+        fake_graph = batch_convert_soft_map_to_graph(fake_data)
+        real_scores, _, _ = critic(real_data, real_graph)
+        fake_scores, _, _ = critic(fake_data, fake_graph)
+        
+        # Wasserstein 距离
+        d_loss = fake_scores.mean() - real_scores.mean()
+        grad_loss = self.compute_gradient_penalty(critic, real_data, fake_data)
+        
+        return d_loss, d_loss + self.lambda_gp * grad_loss
+    
+    def generator_loss_one(self, critic, fake):
+        fake_graph = batch_convert_soft_map_to_graph(fake)
+        fake_scores, _, _ = critic(fake, fake_graph)
+        minamo_loss = -torch.mean(fake_scores)
+        class_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
+        entrance_loss = entrance_constraint_loss(fake)
+        
+        losses = [
+            minamo_loss * self.weight[0],
+            class_loss * self.weight[1],
+            entrance_loss * self.weight[2]
+        ]
+        
+        return sum(losses)
+
+    def generator_loss(self, critic, fake1, fake2):
+        """ 生成器损失函数 """
+        loss1 = self.generator_loss_one(critic, fake1)
+        loss2 = self.generator_loss_one(critic, fake2)
+        
+        return loss1 * 0.5 + loss2 * 0.5 - self.diversity_lamda * js_divergence(fake1, fake2)

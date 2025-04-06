@@ -192,7 +192,10 @@ export function generateTrainData(
     id2: string,
     map1: number[][],
     map2: number[][],
-    size: [number, number]
+    size: [number, number],
+    hasSelf: boolean = true,
+    hasTransform: boolean = true,
+    hasSimilar: boolean = true
 ) {
     const topoSimilarity = compareMap(id1, id2, map1, map2);
     const visionSimilarity = calculateVisualSimilarity(map1, map2);
@@ -205,39 +208,47 @@ export function generateTrainData(
     };
     const data: MinamoTrainData[] = [];
     data.push(train);
-    // 自身与自身对比的训练集，保证模型对相同地图输出 1
-    const self1 = `${id1}:${id1}`;
-    const self2 = `${id2}:${id2}`;
-    const selfTrain = chooseFrom([self1, self2], Math.floor(Math.random() * 1));
-    if (selfTrain.includes(self1)) {
-        const selfTrain1: MinamoTrainData = {
-            map1: map1,
-            map2: map1,
-            topoSimilarity: 1,
-            visionSimilarity: 1,
-            size: size
-        };
-        data.push(selfTrain1);
+    if (hasSelf) {
+        // 自身与自身对比的训练集，保证模型对相同地图输出 1
+        const self1 = `${id1}:${id1}`;
+        const self2 = `${id2}:${id2}`;
+        const selfTrain = chooseFrom([self1, self2], Math.floor(Math.random() * 1));
+        if (selfTrain.includes(self1)) {
+            const selfTrain1: MinamoTrainData = {
+                map1: map1,
+                map2: map1,
+                topoSimilarity: 1,
+                visionSimilarity: 1,
+                size: size
+            };
+            data.push(selfTrain1);
+        }
+        if (selfTrain.includes(self2)) {
+            const selfTrain2: MinamoTrainData = {
+                map1: map2,
+                map2: map2,
+                topoSimilarity: 1,
+                visionSimilarity: 1,
+                size: size
+            };
+            data.push(selfTrain2);
+        }
     }
-    if (selfTrain.includes(self2)) {
-        const selfTrain2: MinamoTrainData = {
-            map1: map2,
-            map2: map2,
-            topoSimilarity: 1,
-            visionSimilarity: 1,
-            size: size
-        };
-        data.push(selfTrain2);
+    if (hasTransform) {
+        const transform = generateTransformData(
+            id1,
+            id2,
+            map1,
+            map2,
+            topoSimilarity
+        );
+        data.push(...transform.map(v => v[1]))
     }
-    const transform = generateTransformData(
-        id1,
-        id2,
-        map1,
-        map2,
-        topoSimilarity
-    );
-    const similar = generateSimilarData(id1, map1);
-    return [...data, ...transform.map(v => v[1]), ...similar.map(v => v[1])];
+    if (hasSimilar) {
+        const similar = generateSimilarData(id1, map1);
+        data.push(...similar.map(v => v[1]))
+    }
+    return data;
 }
 
 export function generatePair(

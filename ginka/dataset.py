@@ -51,6 +51,25 @@ class GinkaDataset(Dataset):
             "target": target,
         }
         
+class GinkaWGANDataset(Dataset):
+    def __init__(self, data_path: str, device):
+        self.data = load_data(data_path)  # 自定义数据加载函数
+        self.device = device
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        
+        target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+        min_main = random.uniform(0.75, 0.9)
+        max_main = random.uniform(0.9, 1)
+        epsilon = random.uniform(0, 0.25)
+        target_smooth = random_smooth_onehot(target, min_main, max_main, epsilon).to(self.device)
+        
+        return target_smooth
+        
 class MinamoGANDataset(Dataset):
     def __init__(self, refer_data_path):
         self.refer = load_minamo_gan_data(load_data(refer_data_path))
@@ -67,6 +86,7 @@ class MinamoGANDataset(Dataset):
         return len(self.data)
     
     def __getitem__(self, idx):
+        # 假定 map2 是参考地图
         item = self.data[idx]
         
         map1, map2, vis_sim, topo_sim, review = item

@@ -4,7 +4,7 @@ import { MinamoTrainData } from './types';
 import { generateTrainData } from './process/minamo';
 
 const SOCKET_FILE = '../tmp/ginka_uds';
-const [refer] = process.argv.slice(2);
+const [refer, replayPath = '../datasets/replay.bin'] = process.argv.slice(2);
 
 let id = 0;
 
@@ -43,7 +43,7 @@ function generateGANData(
         const size2: [number, number] = [map[0].length, map.length];
         if (size1[0] !== size2[0] || size1[1] !== size2[1]) return []; 
 
-        return generateTrainData(v, id2, floor.map, map, size1);
+        return generateTrainData(v, id2, floor.map, map, size1, false, false, false);
     });
     return data.flat();
 }
@@ -104,7 +104,7 @@ class DataReceiver {
         console.log(`UDS IPC connected successfully.`);
     });
 
-    client.on('data', buffer => {
+    client.on('data', async buffer => {
         const data = DataReceiver.check(buffer);
         if (!data) return;
 
@@ -112,20 +112,19 @@ class DataReceiver {
         const simData = map.map(v => generateGANData(keys, referTower, v));
         const rc = 0;
         const compareData = simData.flat();
-        const reviewData: MinamoTrainData[] = [];
 
         // 数据通讯 node 输出协议，单位字节：
-        // 2 - Tensor count; 2 - Review count. Review is right behind train data;
+        // 2 - Tensor count; 2 - Replay count. Replay is right behind train data;
         // 1*tc - Compare count for every map tensor delivered.
         // 2*4*(N+rc) - Vision similarity and topo similarity, like vis, topo, vis, topo;
-        // N*1*H*W - Compare map for every map tensor. rc*2*H*W - Review map tensor.
+        // N*1*H*W - Compare map for every map tensor. rc*2*H*W - Replay map tensor.
         const toSend = Buffer.alloc(
             2 + // Tensor count
-                2 + // Review count
+                2 + // Replay count
                 1 * count + // Compare count
                 2 * 4 * (compareData.length + rc) + // Similarity data
                 compareData.length * 1 * h * w + // Compare map
-                rc * 2 * h * w, // Review map
+                rc * 2 * h * w, // Replay map
             0
         );
         console.log(
@@ -141,7 +140,7 @@ class DataReceiver {
         
         let offset = 0;
         toSend.writeInt16BE(count); // Tensor count
-        toSend.writeInt16BE(0, 2); // Review count
+        toSend.writeInt16BE(0, 2); // Replay count
         offset += 2 + 2;
         // Compare count
         toSend.set(
@@ -164,13 +163,6 @@ class DataReceiver {
             offset // Set from Compare map
         );
         offset += compareData.length * 1 * h * w;
-        if (reviewData.length > 0) {
-            // Review map
-            toSend.set(
-                new Uint8Array(reviewData.map(v => [v.map1, v.map2]).flat(4)),
-                offset // Set from last chunk
-            );
-        }
 
         client.write(toSend);
     });

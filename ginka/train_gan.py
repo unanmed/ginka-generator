@@ -11,17 +11,19 @@ from tqdm import tqdm
 import cv2
 import numpy as np
 from .model.model import GinkaModel
-from .model.loss import GinkaLoss
+from .model.loss import GinkaLoss, WGANGinkaLoss
 from .dataset import GinkaDataset, MinamoGANDataset
 from minamo.model.model import MinamoModel
 from minamo.model.loss import MinamoLoss
 from shared.image import matrix_to_image_cv
 
 BATCH_SIZE = 32
-EPOCHS_GINKA = 30
-EPOCHS_MINAMO = 5
+EPOCHS_GINKA = 5
+EPOCHS_MINAMO = 2
 SOCKET_PATH = "./tmp/ginka_uds"
 LOSS_PATH = "result/gan/a-loss.txt"
+REPLAY_PATH = "datasets/replay.bin"
+VISION_ALPHA = 0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
@@ -31,6 +33,10 @@ os.makedirs("tmp", exist_ok=True)
 
 with open(LOSS_PATH, 'a', encoding='utf-8') as f:
     f.write(f"---------- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ----------\n")
+
+if not os.path.exists(REPLAY_PATH):
+    with open(REPLAY_PATH, 'wb') as f:
+        f.write(b'\x00\x00\x00\x00')
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="training codes")
@@ -142,13 +148,15 @@ def train():
     minamo_dataloader_val = DataLoader(minamo_dataset_val, batch_size=BATCH_SIZE // 2, shuffle=True)
     
     # 设定优化器与调度器
-    optimizer_ginka = optim.AdamW(ginka.parameters(), lr=1e-3)
+    optimizer_ginka = optim.Adam(ginka.parameters(), lr=1e-4, betas=(0.0, 0.9))
     scheduler_ginka = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_ginka, T_0=10, T_mult=2, eta_min=1e-6)
     criterion_ginka = GinkaLoss(minamo)
     
-    optimizer_minamo = optim.AdamW(minamo.parameters(), lr=1e-4)
-    scheduler_minamo = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_minamo, T_0=5, T_mult=2, eta_min=1e-6)
+    optimizer_minamo = optim.Adam(minamo.parameters(), lr=2e-5, betas=(0.0, 0.9))
+    scheduler_minamo = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_minamo, T_0=EPOCHS_MINAMO, T_mult=2, eta_min=1e-6)
     criterion_minamo = MinamoLoss()
+    
+    criterion = WGANGinkaLoss()
     
     # 用于生成图片
     tile_dict = dict()
@@ -168,26 +176,16 @@ def train():
         ginka.load_state_dict(data["model_state"], strict=False)
         print("Train from loaded state.")
         
-    else:
-        # 从头开始训练的话，初始时先把 minamo 损失值权重改为 0
-        criterion_ginka.weight[0] = 0.0
-        
     print("Waiting for client connection...")
     conn, _ = server.accept()
     print("Client connected.")
     
     for cycle in tqdm(range(args.from_cycle, args.to_cycle), desc="Total Progress"):
         # -------------------- 训练生成器
-        gen_list: np.ndarray = np.empty((0, 13, 13), np.int8)
-        prob_list: np.ndarray = np.empty((0, 32, 13, 13), np.float32)
-        for epoch in tqdm(range(EPOCHS_GINKA), desc="Training Ginka Model"):
+        for epoch in tqdm(range(EPOCHS_GINKA), desc="Training Ginka Model", leave=False):
             ginka.train()
             minamo.eval()
             total_loss = 0
-            
-            # 从头开始训练的，在第 10 个 epoch 将 minamo 损失值权重改回来
-            if not args.resume and epoch == 10:
-                criterion_ginka.weight[0] = 0.5
             
             for batch in tqdm(ginka_dataloader, leave=False, desc="Epoch Progress"):
                 # 数据迁移到设备
@@ -233,6 +231,8 @@ def train():
                 }, f"result/ginka_checkpoint/{epoch + 1}.pth")
                 
         # 使用训练集生成 minamo 训练数据，更准确
+        gen_list: np.ndarray = np.empty((0, 13, 13), np.int8)
+        prob_list: np.ndarray = np.empty((0, 32, 13, 13), np.float32)
         with torch.no_grad():
             for batch in ginka_dataloader:
                 target, target_vision_feat, target_topo_feat, feat_vec = parse_ginka_batch(batch)
@@ -263,7 +263,7 @@ def train():
         buf.extend(gen_bytes) # Map tensor
         conn.sendall(buf)
         data = parse_minamo_data(conn, prob_list)
-        minamo_dataset.set_data(data)
+
         vis_sim = 0
         topo_sim = 0
         for _, _, vis, topo, _ in data:
@@ -276,6 +276,44 @@ def train():
         with open(LOSS_PATH, 'a', encoding='utf-8') as f:
             f.write(f'Cycle {cycle} | Ginka Vision Similarity: {vis_sim:.12f} | Ginka Topo Similarity: {topo_sim:.12f} | Ginka Loss: {avg_val_loss:.12f}')
         
+        # 经验回放部分
+        with open(REPLAY_PATH, 'r+b') as f:
+            # 读取文件开头获取总长度
+            f.seek(0)
+            count = struct.unpack('>i', f.read(4))[0]  # 取出整数
+            if count > 0:
+                replay = np.random.choice(count, size=min(count, len(data) // 4), replace=False)
+                
+                replay_data = np.empty((len(replay), 32, 13, 13))
+                for i, n in enumerate(replay):
+                    f.seek(n * 32 * 13 * 13 + 4)
+                    arr = np.frombuffer(f.read(32 * 13 * 13 * 4), dtype=np.float32).reshape(32, 13, 13)
+                    replay_data[i] = arr
+                
+                map_data: np.ndarray = replay_data.argmax(axis=1)
+                buf = bytearray()
+                buf.extend(struct.pack('>h', len(replay)))  # Tensor count
+                buf.extend(struct.pack('>b', H))  # Map height
+                buf.extend(struct.pack('>b', W))  # Map width
+                buf.extend(map_data.astype(np.int8).tobytes())  # Map tensor
+                conn.sendall(buf)
+                data.extend(parse_minamo_data(conn, replay_data))
+
+            # 把新的内容写入文件末尾
+            to_write = np.random.choice(N, size=min(N, 100), replace=False)
+            write_data = bytearray()
+            for n in to_write:
+                write_data.extend(prob_list[n].tobytes())
+            
+            f.seek(0, 2)  # 定位到文件末尾
+            f.write(write_data)
+            
+            f.seek(0)  # 定位到文件开头
+            f.write(struct.pack('>i', count + len(to_write)))
+            f.flush()  # 确保数据被刷新到磁盘
+        
+        minamo_dataset.set_data(data)
+        
         # -------------------- 训练判别器
         for epoch in tqdm(range(EPOCHS_MINAMO), leave=False, desc="Training Minamo Model"):
             ginka.eval()
@@ -283,21 +321,43 @@ def train():
             total_loss = 0
             
             for batch in tqdm(minamo_dataloader, leave=False, desc="Epoch Progress"):
-                map1, map2, vision_simi, topo_simi, graph1, graph2 = parse_minamo_batch(batch)
+                map1, map2, vis_sim, topo_sim, graph1, graph2 = parse_minamo_batch(batch)
+                batch_size = map1.shape[0]
                 
-                if map1.shape[0] == 1:
+                if batch_size == 1:
                     continue
                 
                 # 前向传播
                 optimizer_minamo.zero_grad()
-                vision_feat1, topo_feat1 = minamo(map1, graph1)
-                vision_feat2, topo_feat2 = minamo(map2, graph2)
+                vis_feat_real, topo_feat_real = minamo(map1, graph1)
+                vis_feat_ref, topo_feat_ref = minamo(map2, graph2)
                 
-                vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, dim=1).unsqueeze(-1)
-                topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, dim=1).unsqueeze(-1)
+                # 生成假数据
+                with torch.no_grad():
+                    fake_feat = torch.randn((batch_size, 1024), device=device)
+                    fake_data = ginka(fake_feat)
+                
+                # 创建插值样本
+                alpha = torch.rand((batch_size, 1, 1, 1), device=device)
+                interpolates = (alpha * map2 + (1 - alpha) * fake_data).requires_grad_(True)
+                
+                vis_feat_fake, topo_feat_fake = minamo(fake_data)
+                vis_feat_interp, topo_feat_interp = minamo(interpolates)
+                
+                vis_pred_real = F.cosine_similarity(vis_feat_real, vis_feat_ref, dim=1).unsqueeze(-1)
+                topo_pred_real = F.cosine_similarity(topo_feat_real, topo_feat_ref, dim=1).unsqueeze(-1)
+                vis_pred_fake = F.cosine_similarity(vis_feat_fake, vis_feat_ref, dim=1).unsqueeze(-1)
+                topo_pred_fake = F.cosine_similarity(topo_feat_fake, topo_feat_ref, dim=1).unsqueeze(-1)
+                vis_pred_interp = F.cosine_similarity(vis_feat_interp, vis_feat_ref, dim=1).unsqueeze(-1)
+                topo_pred_interp = F.cosine_similarity(topo_feat_interp, topo_feat_ref, dim=1).unsqueeze(-1)
+                
+                # 计算相似度
+                score_real = F.l1_loss(vis_pred_real, vis_sim) * VISION_ALPHA + F.l1_loss(topo_pred_real, topo_sim) * (1 - VISION_ALPHA)
+                score_fake = vis_pred_fake * VISION_ALPHA + topo_pred_fake * (1 - VISION_ALPHA)
+                score_interp = vis_pred_interp * VISION_ALPHA + topo_pred_interp * (1 - VISION_ALPHA)
                 
                 # 计算损失
-                loss = criterion_minamo(vision_pred, topo_pred, vision_simi, topo_simi)
+                loss = criterion.discriminator_loss(score_real, score_fake, score_interp)
                 
                 # 反向传播
                 loss.backward()
@@ -310,21 +370,21 @@ def train():
             scheduler_minamo.step(epoch + 1)
             
             # 每十轮推理一次验证集
-            if (epoch + 1) % 5 == 0:
+            if epoch + 1 == EPOCHS_MINAMO:
                 minamo.eval()
                 val_loss = 0
                 with torch.no_grad():
                     for val_batch in tqdm(minamo_dataloader_val, leave=False, desc="Validating Minamo Model"):
                         map1_val, map2_val, vision_simi_val, topo_simi_val, graph1, graph2 = parse_minamo_batch(val_batch)
                         
-                        vision_feat1, topo_feat1 = minamo(map1_val, graph1)
-                        vision_feat2, topo_feat2 = minamo(map2_val, graph2)
+                        vis_feat_real, topo_feat_real = minamo(map1_val, graph1)
+                        vis_feat_ref, topo_feat_ref = minamo(map2_val, graph2)
                 
-                        vision_pred = F.cosine_similarity(vision_feat1, vision_feat2, dim=1).unsqueeze(-1)
-                        topo_pred = F.cosine_similarity(topo_feat1, topo_feat2, dim=1).unsqueeze(-1)
+                        vis_pred_real = F.cosine_similarity(vis_feat_real, vis_feat_ref, dim=1).unsqueeze(-1)
+                        topo_pred_real = F.cosine_similarity(topo_feat_real, topo_feat_ref, dim=1).unsqueeze(-1)
                         
                         # 计算损失
-                        loss_val = criterion_minamo(vision_pred, topo_pred, vision_simi_val, topo_simi_val)
+                        loss_val = criterion_minamo(vis_pred_real, topo_pred_real, vision_simi_val, topo_simi_val)
                         val_loss += loss_val.item()
                         
                 avg_val_loss = val_loss / len(minamo_dataloader_val)

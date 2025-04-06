@@ -1,5 +1,6 @@
 import torch
 from torch_geometric.data import Data, Batch
+from torch_geometric.utils import add_self_loops
 
 def differentiable_convert_to_data(map_probs: torch.Tensor) -> Data:
     """
@@ -44,6 +45,8 @@ def differentiable_convert_to_data(map_probs: torch.Tensor) -> Data:
     src_feat = map_probs[:, edge_src // W, edge_src % W].T  # [E, C]
     dst_feat = map_probs[:, edge_dst // W, edge_dst % W].T  # [E, C]
     edge_attr = (src_feat + dst_feat) / 2 * edge_mask  # [E, C]
+    
+    edge_index, edge_attr = add_self_loops(edge_index, edge_attr)
 
     return Data(
         x=node_features,
