@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 from datetime import datetime
 import torch
 import torch.optim as optim
@@ -20,6 +21,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/wgan", exist_ok=True)
 
+disable_tqdm = not sys.stdout.isatty()
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="training codes")
     parser.add_argument("--resume", type=bool, default=False)
@@ -37,10 +40,12 @@ def clip_weights(model, clip_value=0.01):
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
     
-    c_steps = 1
-    g_steps = 4
-    
     args = parse_arguments()
+    
+    # c_steps = 1 if args.resume else 5
+    # g_steps = 5 if args.resume else 1
+    c_steps = 5
+    g_steps = 1
     
     ginka = GinkaModel()
     minamo = MinamoScoreModule()
@@ -50,8 +55,8 @@ def train():
     dataset = GinkaWGANDataset(args.train, device)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
     
-    optimizer_ginka = optim.RMSprop(ginka.parameters(), lr=2e-4)
-    optimizer_minamo = optim.RMSprop(minamo.parameters(), lr=1e-5)
+    optimizer_ginka = optim.Adam(ginka.parameters(), lr=1e-4, betas=(0.0, 0.9))
+    optimizer_minamo = optim.Adam(minamo.parameters(), lr=1e-5, betas=(0.0, 0.9))
     
     criterion = WGANGinkaLoss()
     
@@ -68,12 +73,12 @@ def train():
         minamo.load_state_dict(data["model_state"], strict=False)
         print("Train from loaded state.")
         
-    for epoch in tqdm(range(args.epochs), desc="GAN Training"):
+    for epoch in tqdm(range(args.epochs), desc="GAN Training", disable=disable_tqdm):
         loss_total_minamo = torch.Tensor([0]).to(device)
         loss_total_ginka = torch.Tensor([0]).to(device)
         dis_total = torch.Tensor([0]).to(device)
         
-        for real_data in tqdm(dataloader, leave=False, desc="Epoch Progress"):
+        for real_data in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             batch_size = real_data.size(0)
             real_data = real_data.to(device)
             real_graph = batch_convert_soft_map_to_graph(real_data)
@@ -92,7 +97,11 @@ def train():
                 # 反向传播
                 dis, loss_d = criterion.discriminator_loss(minamo, real_data, real_graph, fake_data)
                 loss_d.backward()
-                # torch.nn.utils.clip_grad_norm_(minamo_vis.parameters(), max_norm=1.0)
+                # torch.nn.utils.clip_grad_norm_(minamo.parameters(), max_norm=1.0)
+                # total_norm = torch.linalg.vector_norm(torch.stack([torch.linalg.vector_norm(p.grad) for p in minamo.topo_model.parameters()]), 2)
+                # print("Critic 梯度范数:", total_norm.item())
+                # print("Critic 输入范围:", fake_data.min().item(), fake_data.max().item(), real_data.min().item(), real_data.max().item())
+                # print("Critic 输出范围:", d_real.min().item(), d_real.max().item())
                 optimizer_minamo.step()
                 
                 loss_total_minamo += loss_d
@@ -119,21 +128,27 @@ def train():
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Epoch: {epoch + 1} | Wasserstein Loss: {avg_dis:.8f} | Loss Ginka: {avg_loss_ginka:.8f} | Loss Minamo: {avg_loss_minamo:.8f}"
         )
         
-        if avg_dis < -9:
-            g_steps = 21
-        elif avg_dis < -6:
-            g_steps = 14
-        elif avg_dis < -3:
-            g_steps = 7
+        if avg_dis < 0:
+            g_steps = max(int(-avg_dis * 5), 1)
         else:
             g_steps = 1
+            
+        # if avg_dis > 0:
+        #     c_steps = min(max(int(avg_dis * 5), 1), 5)
+        # else:
+        #     c_steps = 1
         
-        if avg_dis > 3:
-            c_steps = 3
-        else:
-            c_steps = 1
+        # if avg_loss_minamo > 0:
+        #     c_steps += min(max(int(avg_loss_minamo * 3), 1), 5)
+        # else:
+        #     c_steps += 0
         
-        # 每五轮输出一次图片，并保存检查点
+        # if avg_dis > 3:
+        #     c_steps = 3
+        # else:
+        #     c_steps = 1
+        
+        # 每若干轮输出一次图片，并保存检查点
         if (epoch + 1) % 5 == 0:
             # 输出 20 张图片，每批次 4 张，一共五批
             idx = 0

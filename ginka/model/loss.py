@@ -311,7 +311,7 @@ def js_divergence(P, Q, epsilon=1e-10):
     return js.mean()  # 标量
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=20, weight=[0.7, 0.2, 0.1], diversity_lamda=0):
+    def __init__(self, lambda_gp=50, weight=[0.7, 0.2, 0.1], diversity_lamda=0.2):
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
         self.diversity_lamda = diversity_lamda
@@ -361,6 +361,8 @@ class WGANGinkaLoss:
         real_scores, _, _ = critic(real_data, real_graph)
         fake_scores, _, _ = critic(fake_data, fake_graph)
         
+        # print("Critic 输出范围", fake_scores.min().item(), fake_scores.max().item(), real_scores.min().item(), real_scores.max().item())
+        
         # Wasserstein 距离
         d_loss = fake_scores.mean() - real_scores.mean()
         grad_loss = self.compute_gradient_penalty(critic, real_data, fake_data)
@@ -381,10 +383,16 @@ class WGANGinkaLoss:
         ]
         
         return sum(losses)
+    
+    def diversity_loss(self, fake1, fake2):        
+        fake1 = fake1[:, :, 1:-1, 1:-1]
+        fake2 = fake2[:, :, 1:-1, 1:-1]
+        
+        return js_divergence(fake1, fake2)
 
     def generator_loss(self, critic, fake1, fake2):
         """ 生成器损失函数 """
         loss1 = self.generator_loss_one(critic, fake1)
         loss2 = self.generator_loss_one(critic, fake2)
         
-        return loss1 * 0.5 + loss2 * 0.5 - self.diversity_lamda * js_divergence(fake1, fake2)
+        return loss1 * 0.5 + loss2 * 0.5 - self.diversity_lamda * self.diversity_loss(fake1, fake2)

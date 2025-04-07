@@ -19,7 +19,8 @@ class MinamoVisionModel(nn.Module):
             nn.Flatten()
         )
         self.fc = nn.Sequential(
-            spectral_norm(nn.Linear(in_ch*8*2*2, out_dim))
+            spectral_norm(nn.Linear(in_ch*8*2*2, out_dim)),
+            nn.LeakyReLU(0.2)
         )
         
     def forward(self, x):

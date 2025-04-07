@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import spectral_norm
 from .vision import MinamoVisionModel
 from .topo import MinamoTopoModel
 from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
@@ -60,14 +61,10 @@ class MinamoScoreModule(nn.Module):
         self.vision_model = MinamoVisionModel(tile_types)
         # 输出层
         self.topo_fc = nn.Sequential(
-            nn.Linear(512, 2048),
-            nn.LeakyReLU(0.2),
-            nn.Linear(2048, 1)
+            spectral_norm(nn.Linear(512, 1)),
         )
         self.vision_fc = nn.Sequential(
-            nn.Linear(512, 2048),
-            nn.LeakyReLU(0.2),
-            nn.Linear(2048, 1)
+            spectral_norm(nn.Linear(512, 1)),
         )
 
     def forward(self, map, graph):

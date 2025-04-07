@@ -12,7 +12,7 @@ class MinamoTopoModel(nn.Module):
         super().__init__()
         # 传入 softmax 概率值，直接映射
         self.input_proj = nn.Sequential(
-            nn.Linear(tile_types, emb_dim),
+            spectral_norm(nn.Linear(tile_types, emb_dim)),
             nn.LeakyReLU(0.2)
         )
         # 图卷积层
@@ -25,7 +25,7 @@ class MinamoTopoModel(nn.Module):
         # self.norm3 = nn.LayerNorm(out_dim)
         
         self.fc = nn.Sequential(
-            nn.Linear(out_dim, feat_dim),
+            spectral_norm(nn.Linear(out_dim, feat_dim)),
             nn.LeakyReLU(0.2)
         )
         

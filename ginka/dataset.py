@@ -63,12 +63,12 @@ class GinkaWGANDataset(Dataset):
         item = self.data[idx]
         
         target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        min_main = random.uniform(0.75, 0.9)
-        max_main = random.uniform(0.9, 1)
-        epsilon = random.uniform(0, 0.25)
-        target_smooth = random_smooth_onehot(target, min_main, max_main, epsilon).to(self.device)
+        # min_main = random.uniform(0.8, 0.9)
+        # max_main = random.uniform(0.9, 1)
+        # epsilon = random.uniform(0, 0.2)
+        # target_smooth = random_smooth_onehot(target, min_main, max_main, epsilon).to(self.device)
         
-        return target_smooth
+        return target
         
 class MinamoGANDataset(Dataset):
     def __init__(self, refer_data_path):
