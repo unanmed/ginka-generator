@@ -7,6 +7,8 @@ from torch_geometric.data import Data
 from minamo.model.model import MinamoModel
 from shared.graph import batch_convert_soft_map_to_graph
 from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
+from shared.similarity.topo import overall_similarity, build_topological_graph
+from shared.similarity.vision import calculate_visual_similarity
 
 CLASS_NUM = 32
 ILLEGAL_MAX_NUM = 12
@@ -286,32 +288,21 @@ def interpolate_graph_features(real_graph, fake_graph, epsilon=0.5):
     
     return Data(x=x_interp, edge_index=edge_index_interp, edge_attr=edge_attr_interp)
     
-def js_divergence(P, Q, epsilon=1e-10):
-    """
-    输入:
-        P, Q: [B, C, H, W], 已通过 Softmax 处理
-    输出:
-        JS 散度标量（全局平均）
-    """
-    # 转换为 [B, H, W, C] 以便在最后一维计算概率分布
-    P = P.permute(0, 2, 3, 1)  # [B, H, W, C]
-    Q = Q.permute(0, 2, 3, 1)
+def js_divergence(p, q, eps=1e-8):
+    # softmax 后变成概率分布    
+    m = 0.5 * (p + q)
     
-    # 平均分布 M = (P + Q)/2
-    M = 0.5 * (P + Q)
-    
-    # 计算 KL(P||M) 和 KL(Q||M)
-    kl_pm = F.kl_div(torch.log(M + epsilon), P, reduction='none', log_target=False).sum(dim=-1)  # [B, H, W]
-    kl_qm = F.kl_div(torch.log(M + epsilon), Q, reduction='none', log_target=False).sum(dim=-1)  # [B, H, W]
-    
-    # JS 散度 = 0.5*(KL(P||M) + KL(Q||M))
-    js = 0.5 * (kl_pm + kl_qm)
-    
-    # 全局平均（可替换为其他聚合方式）
-    return js.mean()  # 标量
+    # log_softmax 以供 kl_div 使用
+    log_p = torch.log(p + eps)
+    log_q = torch.log(q + eps)
+
+    kl_pm = F.kl_div(log_p, m, reduction='batchmean', log_target=False)  # KL(p || m)
+    kl_qm = F.kl_div(log_q, m, reduction='batchmean', log_target=False)  # KL(q || m)
+
+    return torch.clamp(0.5 * (kl_pm + kl_qm), max=1.0)
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=50, weight=[0.7, 0.2, 0.1], diversity_lamda=0.2):
+    def __init__(self, lambda_gp=100, weight=[0.8, 0.1, 0.1], diversity_lamda=0.4):
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
         self.diversity_lamda = diversity_lamda
@@ -369,8 +360,50 @@ class WGANGinkaLoss:
         
         return d_loss, d_loss + self.lambda_gp * grad_loss
     
-    def generator_loss_one(self, critic, fake):
-        fake_graph = batch_convert_soft_map_to_graph(fake)
+    def calculate_similarity_one(self, map1, map2):
+        topo1 = build_topological_graph(map1)
+        topo2 = build_topological_graph(map2)
+        
+        vis_sim = calculate_visual_similarity(map1, map2)
+        topo_sim = overall_similarity(topo1, topo2)
+        
+        return vis_sim, topo_sim
+    
+    def discriminator_loss_assist(self, critic, fake_data1, fake_data2):
+        graph1 = batch_convert_soft_map_to_graph(fake_data1)
+        graph2 = batch_convert_soft_map_to_graph(fake_data2)
+        vis_feat_1, topo_feat_1 = critic(fake_data1, graph1)
+        vis_feat_2, topo_feat_2 = critic(fake_data2, graph2)
+        
+        batch1 = torch.argmax(fake_data1, dim=1).cpu().tolist()
+        batch2 = torch.argmax(fake_data2, dim=1).cpu().tolist()
+        
+        vis_sim_real = []
+        topo_sim_real = []
+        
+        for i in range(len(batch1)):
+            vis_sim, topo_sim = self.calculate_similarity_one(batch1[i], batch2[i])
+            vis_sim_real.append(vis_sim)
+            topo_sim_real.append(topo_sim)
+            
+        vis_sim_real = torch.Tensor(vis_sim_real)
+        topo_sim_real = torch.Tensor(topo_sim_real)
+        
+        pred_vis_sim = F.cosine_similarity(vis_feat_1, vis_feat_2).cpu()
+        pred_topo_sim = F.cosine_similarity(topo_feat_1, topo_feat_2).cpu()
+        
+        loss1 = F.l1_loss(pred_vis_sim, vis_sim_real) * VISION_WEIGHT + F.l1_loss(pred_topo_sim, topo_sim_real) * TOPO_WEIGHT
+        
+        return loss1
+    
+    def discriminator_loss_assist2(self, critic, real_data, fake_data1, fake_data2):
+        loss1 = self.discriminator_loss_assist(critic, real_data, fake_data1)
+        loss2 = self.discriminator_loss_assist(critic, real_data, fake_data2)
+        loss3 = self.discriminator_loss_assist(critic, fake_data1, fake_data2)
+        
+        return loss1 / 3.0 + loss2 / 3.0 + loss3 / 3.0
+    
+    def generator_loss_one(self, critic, fake, fake_graph):
         fake_scores, _, _ = critic(fake, fake_graph)
         minamo_loss = -torch.mean(fake_scores)
         class_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
@@ -383,16 +416,25 @@ class WGANGinkaLoss:
         ]
         
         return sum(losses)
-    
-    def diversity_loss(self, fake1, fake2):        
-        fake1 = fake1[:, :, 1:-1, 1:-1]
-        fake2 = fake2[:, :, 1:-1, 1:-1]
-        
-        return js_divergence(fake1, fake2)
 
-    def generator_loss(self, critic, fake1, fake2):
+    def generator_loss(self, critic, critic_assist, fake1, fake2):
         """ 生成器损失函数 """
-        loss1 = self.generator_loss_one(critic, fake1)
-        loss2 = self.generator_loss_one(critic, fake2)
+        fake_graph1 = batch_convert_soft_map_to_graph(fake1)
+        fake_graph2 = batch_convert_soft_map_to_graph(fake2)
         
-        return loss1 * 0.5 + loss2 * 0.5 - self.diversity_lamda * self.diversity_loss(fake1, fake2)
+        loss1 = self.generator_loss_one(critic, fake1, fake_graph1)
+        loss2 = self.generator_loss_one(critic, fake2, fake_graph2)
+        
+        # vis_feat1, topo_feat1 = critic_assist(fake1, fake_graph1)
+        # vis_feat2, topo_feat2 = critic_assist(fake2, fake_graph2)
+        
+        # vis_sim = F.cosine_similarity(vis_feat1, vis_feat2)
+        # topo_sim = F.cosine_similarity(topo_feat1, topo_feat2)
+        # similarity = vis_sim * VISION_WEIGHT + topo_sim * TOPO_WEIGHT
+        
+        # print(similarity.mean().item())
+        # div_loss = F.l1_loss(fake1[:, :, 1:-1, 1:-1], fake2[:, :, 1:-1, 1:-1])
+        
+        return loss1 * 0.5 + loss2 * 0.5\
+            # + self.diversity_lamda * F.relu(0.7 - div_loss).mean()
+            # + self.diversity_lamda * F.relu(similarity - 0.4).mean()

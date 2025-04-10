@@ -1,0 +1,1 @@
+python3 -u -m ginka.train_wgan --epochs 200 --checkpoint 20 --resume true --state_ginka result/wgan/ginka-400.pth --state_minamo result/wgan/minamo-400.pth >> output.log

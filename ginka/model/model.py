@@ -37,12 +37,12 @@ if __name__ == "__main__":
     print_memory("初始化后")
     
     # 前向传播
-    output, output_softmax = model(feat)
+    output = model(feat)
     
     print_memory("前向传播后")
     
     print(f"输入形状: feat={feat.shape}")
-    print(f"输出形状: output={output.shape}, softmax={output_softmax.shape}")
+    print(f"输出形状: output={output.shape}")
     # print(f"Input parameters: {sum(p.numel() for p in model.input.parameters())}")
     # print(f"Feature Encoder parameters: {sum(p.numel() for p in model.feat_enc.parameters())}")
     print(f"UNet parameters: {sum(p.numel() for p in model.unet.parameters())}")
