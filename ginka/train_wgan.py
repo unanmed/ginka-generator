@@ -16,7 +16,7 @@ from shared.graph import batch_convert_soft_map_to_graph
 from shared.image import matrix_to_image_cv
 from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
 
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
@@ -30,39 +30,56 @@ def parse_arguments():
     parser.add_argument("--state_ginka", type=str, default="result/wgan/ginka-100.pth")
     parser.add_argument("--state_minamo", type=str, default="result/wgan/minamo-100.pth")
     parser.add_argument("--train", type=str, default="ginka-dataset.json")
+    parser.add_argument("--validate", type=str, default="ginka-eval.json")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--checkpoint", type=int, default=5)
     parser.add_argument("--load_optim", type=bool, default=True)
     args = parser.parse_args()
     return args
 
-def clip_weights(model, clip_value=0.01):
-    for param in model.parameters():
-        param.data = torch.clamp(param.data, -clip_value, clip_value)
+def gen_curriculum(gen, masked1, masked2, masked3, detach=False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    fake1: torch.Tensor = gen(masked1, 1)
+    fake2: torch.Tensor = gen(masked2, 2)
+    fake3: torch.Tensor = gen(masked3, 3)
+    if detach:
+        return fake1.detach(), fake2.detach(), fake3.detach()
+    else:
+        return fake1, fake2, fake3
+    
+def gen_total(gen, input, detach=False) -> torch.Tensor:
+    fake1 = gen(input, 1)
+    fake2 = gen(fake1, 2)
+    fake3 = gen(fake2, 3)
+    if detach:
+        return fake3.detach()
+    else:
+        return fake3
 
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
     
     args = parse_arguments()
     
-    # c_steps = 1 if args.resume else 5
-    # g_steps = 5 if args.resume else 1
     c_steps = 5
     g_steps = 1
+    # 1 代表课程学习阶段，2 代表课程学习后，逐渐转为联合学习的阶段
+    # 3 代表课程学习后的联合遮挡学习阶段，4 代表最后随机输入的联合学习阶段
+    train_stage = 1
+    mask_ratio = 0.1 # 蒙版区域大小，每次增加 0.1，到达 0.9 之后进入阶段 2 的训练
+    random_ratio = 0
     
     ginka = GinkaModel()
     minamo = MinamoScoreModule()
-    minamo_sim = MinamoSimilarityModel()
     ginka.to(device)
     minamo.to(device)
-    minamo_sim.to(device)
     
     dataset = GinkaWGANDataset(args.train, device)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    dataset_val = GinkaWGANDataset(args.validate, device)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE, shuffle=True)
     
     optimizer_ginka = optim.Adam(ginka.parameters(), lr=1e-4, betas=(0.0, 0.9))
     optimizer_minamo = optim.Adam(minamo.parameters(), lr=1e-5, betas=(0.0, 0.9))
-    optimizer_minamo_sim = optim.Adam(minamo_sim.parameters(), lr=1e-4)
     
     # scheduler_ginka = optim.lr_scheduler.CosineAnnealingLR(optimizer_ginka, T_max=args.epochs)
     # scheduler_minamo = optim.lr_scheduler.CosineAnnealingLR(optimizer_minamo, T_max=args.epochs)
@@ -82,86 +99,133 @@ def train():
         ginka.load_state_dict(data_ginka["model_state"], strict=False)
         minamo.load_state_dict(data_minamo["model_state"], strict=False)
         
-        if data_ginka["c_steps"] is not None and data_ginka["g_steps"] is not None:
+        if data_ginka.get("c_steps") is not None and data_ginka.get("g_steps") is not None:
             c_steps = data_ginka["c_steps"]
             g_steps = data_ginka["g_steps"]
             
+        if data_ginka.get("mask_ratio") is not None:
+            mask_ratio = data_ginka["mask_ratio"]
+            
+        if data_ginka.get("random_ratio") is not None:
+            random_ratio = data_ginka["random_ratio"]
+            
+        if data_ginka.get("stage") is not None:
+            train_stage = data_ginka["stage"]
+            
         if args.load_optim:
-            if data_ginka["optim_state"] is not None:
+            if data_ginka.get("optim_state") is not None:
                 optimizer_ginka.load_state_dict(data_ginka["optim_state"])
-            if data_minamo["optim_state"] is not None:
+            if data_minamo.get("optim_state") is not None:
                 optimizer_minamo.load_state_dict(data_minamo["optim_state"])
-            if data_minamo["optim_state_sim"] is not None:
-                optimizer_minamo_sim.load_state_dict(data_minamo["optim_state_sim"])
+                
+        dataset.train_stage = train_stage
+        dataset.mask_ratio1 = mask_ratio
+        dataset.mask_ratio2 = mask_ratio
+        dataset.mask_ratio3 = mask_ratio
+        dataset.random_ratio = random_ratio
+        
+        dataset_val.train_stage = train_stage
+        dataset_val.mask_ratio1 = mask_ratio
+        dataset_val.mask_ratio2 = mask_ratio
+        dataset_val.mask_ratio3 = mask_ratio
+        dataset_val.random_ratio = random_ratio
             
         print("Train from loaded state.")
         
+    low_loss_epochs = 0
+        
     for epoch in tqdm(range(args.epochs), desc="WGAN Training", disable=disable_tqdm):
         loss_total_minamo = torch.Tensor([0]).to(device)
-        loss_total_minamo_sim = torch.Tensor([0]).to(device)
         loss_total_ginka = torch.Tensor([0]).to(device)
         dis_total = torch.Tensor([0]).to(device)
+        loss_ce_total = torch.Tensor([0]).to(device)
         
-        for real_data in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
-            batch_size = real_data.size(0)
-            real_data = real_data.to(device)
-            real_graph = batch_convert_soft_map_to_graph(real_data)
+        for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
+            real1, masked1, real2, masked2, real3, masked3 = [item.to(device) for item in batch]
             
             # ---------- 训练判别器
             for _ in range(c_steps):
                 # 生成假样本
                 optimizer_minamo.zero_grad()
-                z = torch.rand(batch_size, 1024, device=device)
-                fake_data = ginka(z)
-                fake_data = fake_data.detach()
-                
-                # 计算判别器输出
-                # 反向传播
-                dis, loss_d = criterion.discriminator_loss(minamo, real_data, real_graph, fake_data)
-                loss_d.backward()
-                # torch.nn.utils.clip_grad_norm_(minamo.parameters(), max_norm=2.0)
-                # total_norm = torch.linalg.vector_norm(torch.stack([torch.linalg.vector_norm(p.grad) for p in minamo.topo_model.parameters()]), 2)
-                # print("Critic 梯度范数:", total_norm.item())
-                # print("Critic 输入范围:", fake_data.min().item(), fake_data.max().item(), real_data.min().item(), real_data.max().item())
-                # print("Critic 输出范围:", d_real.min().item(), d_real.max().item())
+                optimizer_ginka.zero_grad()
+                if train_stage == 1 or train_stage == 2:
+                    fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, True)
+                    
+                    loss_d1, dis1 = criterion.discriminator_loss(minamo, 1, real1, fake1)
+                    loss_d2, dis2 = criterion.discriminator_loss(minamo, 2, real2, fake2)
+                    loss_d3, dis3 = criterion.discriminator_loss(minamo, 3, real3, fake3)
+                    
+                    dis_avg = (dis1 + dis2 + dis3) / 3.0
+                    loss_d_avg = (loss_d1 + loss_d2 + loss_d3) / 3.0
+
+                    # 反向传播
+                    loss_d_avg.backward()
+                elif train_stage == 3:
+                    pass
+                    
                 optimizer_minamo.step()
                 
-                loss_total_minamo += loss_d.detach()
-                dis_total += dis.detach()
+                loss_total_minamo += loss_d_avg.detach()
+                dis_total += dis_avg.detach()
             
             # ---------- 训练生成器
             
             for _ in range(g_steps):
+                optimizer_minamo.zero_grad()
                 optimizer_ginka.zero_grad()
-                # optimizer_minamo_sim.zero_grad()
-                
-                z1 = torch.randn(batch_size, 1024, device=device)
-                z2 = torch.randn(batch_size, 1024, device=device)
-                fake_softmax1, fake_softmax2 = ginka(z1), ginka(z2)
-                
-                # 先训练辅助判别器
-                # loss_c_assist = criterion.discriminator_loss_assist2(minamo_sim, real_data, fake_softmax1, fake_softmax2)
-                # loss_c_assist.backward(retain_graph=True)
-                # optimizer_minamo_sim.step()
-                
-                loss_g = criterion.generator_loss(minamo, minamo_sim, fake_softmax1, fake_softmax2)
-                loss_g.backward()
-                optimizer_ginka.step()
-                
-                loss_total_ginka += loss_g
-                # loss_total_minamo_sim += loss_c_assist.detach()
-            # tqdm.write(f"{dis.item():.12f}, {loss_d.item():.12f}, {loss_g.item():.12f}")
+                if train_stage == 1 or train_stage == 2:
+                    fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, False)
+                    
+                    loss_g1, _, loss_ce_g1, _ = criterion.generator_loss(minamo, 1, mask_ratio, real1, fake1, masked1)
+                    loss_g2, _, loss_ce_g2, _ = criterion.generator_loss(minamo, 2, mask_ratio, real2, fake2, masked2)
+                    loss_g3, _, loss_ce_g3, _ = criterion.generator_loss(minamo, 3, mask_ratio, real3, fake3, masked3)
+                    
+                    loss_g = (loss_g1 + loss_g2 + loss_g3) / 3.0
+                    loss_ce = max(loss_ce_g1, loss_ce_g2, loss_ce_g3)
+                    
+                    loss_g.backward()
+                    optimizer_ginka.step()
+                    loss_total_ginka += loss_g.detach()
+                    loss_ce_total += loss_ce.detach()
+                    
+                elif train_stage == 3:
+                    pass
             
         avg_loss_ginka = loss_total_ginka.item() / len(dataloader) / g_steps
         avg_loss_minamo = loss_total_minamo.item() / len(dataloader) / c_steps
-        avg_loss_minamo_sim = loss_total_minamo_sim.item() / len(dataloader) / g_steps
+        avg_loss_ce = loss_ce_total.item() / len(dataloader) / g_steps
         avg_dis = dis_total.item() / len(dataloader) / c_steps
         tqdm.write(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +\
-            f"Epoch: {epoch + 1} | W Loss: {avg_dis:.8f} | " +\
-            f"G Loss: {avg_loss_ginka:.8f} | D Loss: {avg_loss_minamo:.8f} | " +\
-            f"lr G: {(optimizer_ginka.param_groups[0]['lr']):.8f}"
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
+            f"Epoch: {epoch + 1} | W: {avg_dis:.8f} | " +
+            f"G: {avg_loss_ginka:.8f} | D: {avg_loss_minamo:.8f} | " +
+            f"CE: {avg_loss_ce:.8f} | Mask: {mask_ratio:.2f}"
         )
+        
+        if avg_loss_ce < 0.5:
+            low_loss_epochs += 1
+        else:
+            low_loss_epochs = 0
+            
+        if low_loss_epochs >= 5 and train_stage == 2:
+            random_ratio += 0.1
+            random_ratio = min(random_ratio, 0.5)
+            low_loss_epochs = 0
+        
+        if low_loss_epochs >= 5 and train_stage == 1:
+            if mask_ratio >= 0.9:
+                train_stage = 2
+
+            mask_ratio += 0.1
+            mask_ratio = min(mask_ratio, 0.9)
+            low_loss_epochs = 0
+            
+        dataset.train_stage = 2
+        dataset_val.train_stage = 2
+        dataset.random_ratio = random_ratio
+        dataset_val.random_ratio = random_ratio
+        dataset.mask_ratio1 = dataset.mask_ratio2 = dataset.mask_ratio3 = mask_ratio
+        dataset_val.mask_ratio1 = dataset_val.mask_ratio2 = dataset_val.mask_ratio3 = mask_ratio
         
         # scheduler_ginka.step()
         # scheduler_minamo.step()
@@ -172,38 +236,44 @@ def train():
             g_steps = 1
             
         if avg_loss_ginka > 0 or avg_loss_minamo > 0:
-            c_steps = min(5 + (avg_loss_ginka + avg_loss_minamo) * 5, 15)
+            c_steps = int(max(min(5 + (avg_loss_ginka + avg_loss_minamo) * 5, 15), 1))
         else:
             c_steps = 5
         
         # 每若干轮输出一次图片，并保存检查点
         if (epoch + 1) % args.checkpoint == 0:
-            # 输出 20 张图片，每批次 4 张，一共五批
-            idx = 0
-            with torch.no_grad():
-                for _ in range(5):
-                    z = torch.randn(4, 1024, device=device)
-                    output = ginka(z)
-                    
-                    map_matrix = torch.argmax(output, dim=1).cpu().numpy()
-                    for matrix in map_matrix:
-                        image = matrix_to_image_cv(matrix, tile_dict)
-                        cv2.imwrite(f"result/ginka_img/{idx}.png", image)
-                        idx += 1
-            
             # 保存检查点
             torch.save({
                 "model_state": ginka.state_dict(),
                 "optim_state": optimizer_ginka.state_dict(),
                 "c_steps": c_steps,
-                "g_steps": g_steps
+                "g_steps": g_steps,
+                "stage": train_stage,
+                "mask_ratio": mask_ratio,
+                "random_ratio": random_ratio,
             }, f"result/wgan/ginka-{epoch + 1}.pth")
             torch.save({
                 "model_state": minamo.state_dict(),
-                "model_state_sim": minamo_sim.state_dict(),
-                "optim_state": optimizer_minamo.state_dict(),
-                "optim_state_sim": optimizer_minamo_sim.state_dict()
+                "optim_state": optimizer_minamo.state_dict()
             }, f"result/wgan/minamo-{epoch + 1}.pth")
+            
+            idx = 0
+            with torch.no_grad():
+                for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
+                    real1, masked1, real2, masked2, real3, masked3 = [item.to(device) for item in batch]
+                    if train_stage == 1:
+                        fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, True)
+                        fake1 = torch.argmax(fake1, dim=1).cpu().numpy()
+                        fake2 = torch.argmax(fake2, dim=1).cpu().numpy()
+                        fake3 = torch.argmax(fake3, dim=1).cpu().numpy()
+                        
+                        for i in range(fake1.shape[0]):
+                            for key, one in enumerate([fake1, fake2, fake3]):
+                                map_matrix = one[i]
+                                image = matrix_to_image_cv(map_matrix, tile_dict)
+                                cv2.imwrite(f"result/ginka_img/{idx}_{key}.png", image)
+
+                            idx += 1
     
     print("Train ended.")
     torch.save({
@@ -211,7 +281,6 @@ def train():
     }, f"result/ginka.pth")
     torch.save({
         "model_state": minamo.state_dict(),
-        "model_state_sim": minamo_sim.state_dict(),
     }, f"result/minamo.pth")
 
 if __name__ == "__main__":

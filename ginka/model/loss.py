@@ -13,6 +13,13 @@ from shared.similarity.vision import calculate_visual_similarity
 CLASS_NUM = 32
 ILLEGAL_MAX_NUM = 12
 
+STAGE_ALLOWED = [
+    [],
+    [0, 1, 10, 11],
+    [6, 7, 8, 9,],
+    [2, 3, 4, 5, 12]
+]
+
 def get_not_allowed(classes: list[int], include_illegal=False):
     res = list()
     for num in range(0, CLASS_NUM):
@@ -301,24 +308,47 @@ def js_divergence(p, q, eps=1e-8):
 
     return torch.clamp(0.5 * (kl_pm + kl_qm), max=1.0)
 
+def immutable_penalty_loss(
+    pred: torch.Tensor, input: torch.Tensor, modifiable_classes: list[int]
+) -> torch.Tensor:
+    """
+    惩罚模型修改不可更改区域的损失。
+    
+    Args:
+        input: 模型输出 [B, C, H, W]，概率分布 (softmax 后)
+        target: 原始输入图 [B, C, H, W]，概率分布 (softmax 后)
+        modifiable_classes: 允许被修改的类别列表
+        penalty_weight: 对非允许修改区域的惩罚系数
+    """
+    not_allowed = get_not_allowed(modifiable_classes, include_illegal=True)
+    input_mask = pred[:, not_allowed, :, :]
+    with torch.no_grad():
+        target_mask = torch.argmax(input[:, not_allowed, :, :], dim=1)
+        target_mask = F.one_hot(target_mask, num_classes=len(not_allowed)).permute(0, 3, 1, 2).float()
+
+    # 差异区域（模型试图改变的地方）
+    penalty = F.cross_entropy(input_mask, target_mask)
+
+    return penalty
+
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=100, weight=[0.8, 0.1, 0.1], diversity_lamda=0.4):
+    def __init__(self, lambda_gp=100, weight=[1, 0.4, 10, 0.2, 0.2]):
+        # weight: 判别器损失，L1 损失，不可修改类型损失
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
-        self.diversity_lamda = diversity_lamda
         
-    def compute_gradient_penalty(self, critic, real_data, fake_data):
+    def compute_gradient_penalty(self, critic, stage, real_data, fake_data):
         # 进行插值
         batch_size = real_data.size(0)
         epsilon_data = torch.randn(batch_size, 1, 1, 1, device=real_data.device)
-        interp_data = interpolate_data(real_data, fake_data, epsilon_data)
-        interp_graph = batch_convert_soft_map_to_graph(interp_data)
+        interp_data = interpolate_data(real_data, fake_data, epsilon_data).to(real_data.device)
+        interp_graph = batch_convert_soft_map_to_graph(interp_data).to(real_data.device)
         
         # 对图像进行反向传播并计算梯度
         interp_data.requires_grad_()
         interp_graph.x.requires_grad_()
         
-        _, d_vis_score, d_topo_score = critic(interp_data, interp_graph)
+        _, d_vis_score, d_topo_score = critic(interp_data, interp_graph, stage)
         
         # 计算梯度
         grad_vis = torch.autograd.grad(
@@ -344,21 +374,21 @@ class WGANGinkaLoss:
         return gp_loss
         
     def discriminator_loss(
-        self, critic, real_data: torch.Tensor, 
-        real_graph: torch.Tensor, fake_data: torch.Tensor
-    ):
+        self, critic, stage: int, real_data: torch.Tensor, fake_data: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """ 判别器损失函数 """
+        real_graph = batch_convert_soft_map_to_graph(real_data)
         fake_graph = batch_convert_soft_map_to_graph(fake_data)
-        real_scores, _, _ = critic(real_data, real_graph)
-        fake_scores, _, _ = critic(fake_data, fake_graph)
-        
-        # print("Critic 输出范围", fake_scores.min().item(), fake_scores.max().item(), real_scores.min().item(), real_scores.max().item())
+        real_scores, _, _ = critic(real_data, real_graph, stage)
+        fake_scores, _, _ = critic(fake_data, fake_graph, stage)
         
         # Wasserstein 距离
         d_loss = fake_scores.mean() - real_scores.mean()
-        grad_loss = self.compute_gradient_penalty(critic, real_data, fake_data)
+        grad_loss = self.compute_gradient_penalty(critic, stage, real_data, fake_data)
         
-        return d_loss, d_loss + self.lambda_gp * grad_loss
+        total_loss = d_loss + self.lambda_gp * grad_loss
+        
+        return total_loss, d_loss
     
     def calculate_similarity_one(self, map1, map2):
         topo1 = build_topological_graph(map1)
@@ -368,73 +398,29 @@ class WGANGinkaLoss:
         topo_sim = overall_similarity(topo1, topo2)
         
         return vis_sim, topo_sim
-    
-    def discriminator_loss_assist(self, critic, fake_data1, fake_data2):
-        graph1 = batch_convert_soft_map_to_graph(fake_data1)
-        graph2 = batch_convert_soft_map_to_graph(fake_data2)
-        vis_feat_1, topo_feat_1 = critic(fake_data1, graph1)
-        vis_feat_2, topo_feat_2 = critic(fake_data2, graph2)
+
+    def generator_loss(self, critic, stage, mask_ratio, real, fake, input) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """ 生成器损失函数 """
+        fake_graph = batch_convert_soft_map_to_graph(fake)
         
-        batch1 = torch.argmax(fake_data1, dim=1).cpu().tolist()
-        batch2 = torch.argmax(fake_data2, dim=1).cpu().tolist()
-        
-        vis_sim_real = []
-        topo_sim_real = []
-        
-        for i in range(len(batch1)):
-            vis_sim, topo_sim = self.calculate_similarity_one(batch1[i], batch2[i])
-            vis_sim_real.append(vis_sim)
-            topo_sim_real.append(topo_sim)
-            
-        vis_sim_real = torch.Tensor(vis_sim_real)
-        topo_sim_real = torch.Tensor(topo_sim_real)
-        
-        pred_vis_sim = F.cosine_similarity(vis_feat_1, vis_feat_2).cpu()
-        pred_topo_sim = F.cosine_similarity(topo_feat_1, topo_feat_2).cpu()
-        
-        loss1 = F.l1_loss(pred_vis_sim, vis_sim_real) * VISION_WEIGHT + F.l1_loss(pred_topo_sim, topo_sim_real) * TOPO_WEIGHT
-        
-        return loss1
-    
-    def discriminator_loss_assist2(self, critic, real_data, fake_data1, fake_data2):
-        loss1 = self.discriminator_loss_assist(critic, real_data, fake_data1)
-        loss2 = self.discriminator_loss_assist(critic, real_data, fake_data2)
-        loss3 = self.discriminator_loss_assist(critic, fake_data1, fake_data2)
-        
-        return loss1 / 3.0 + loss2 / 3.0 + loss3 / 3.0
-    
-    def generator_loss_one(self, critic, fake, fake_graph):
-        fake_scores, _, _ = critic(fake, fake_graph)
+        fake_scores, _, _ = critic(fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
-        class_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
-        entrance_loss = entrance_constraint_loss(fake)
+        ce_loss = F.cross_entropy(fake, real)
+        immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
+        constraint_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
         
         losses = [
             minamo_loss * self.weight[0],
-            class_loss * self.weight[1],
-            entrance_loss * self.weight[2]
+            ce_loss * self.weight[1] / mask_ratio * (1 - mask_ratio), # 蒙版越大，交叉熵损失权重越小
+            immutable_loss * self.weight[2],
+            constraint_loss * self.weight[3]
         ]
         
-        return sum(losses)
-
-    def generator_loss(self, critic, critic_assist, fake1, fake2):
-        """ 生成器损失函数 """
-        fake_graph1 = batch_convert_soft_map_to_graph(fake1)
-        fake_graph2 = batch_convert_soft_map_to_graph(fake2)
+        if stage == 1:
+            # 第一个阶段检查入口存在性
+            entrance_loss = entrance_constraint_loss(fake)
+            losses.append(entrance_loss * self.weight[4])
         
-        loss1 = self.generator_loss_one(critic, fake1, fake_graph1)
-        loss2 = self.generator_loss_one(critic, fake2, fake_graph2)
+        # print(losses[2].item())
         
-        # vis_feat1, topo_feat1 = critic_assist(fake1, fake_graph1)
-        # vis_feat2, topo_feat2 = critic_assist(fake2, fake_graph2)
-        
-        # vis_sim = F.cosine_similarity(vis_feat1, vis_feat2)
-        # topo_sim = F.cosine_similarity(topo_feat1, topo_feat2)
-        # similarity = vis_sim * VISION_WEIGHT + topo_sim * TOPO_WEIGHT
-        
-        # print(similarity.mean().item())
-        # div_loss = F.l1_loss(fake1[:, :, 1:-1, 1:-1], fake2[:, :, 1:-1, 1:-1])
-        
-        return loss1 * 0.5 + loss2 * 0.5\
-            # + self.diversity_lamda * F.relu(0.7 - div_loss).mean()
-            # + self.diversity_lamda * F.relu(similarity - 0.4).mean()
+        return sum(losses), minamo_loss, ce_loss / mask_ratio, immutable_loss

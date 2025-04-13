@@ -3,9 +3,17 @@ import random
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-from minamo.model.model import MinamoModel
-from shared.graph import differentiable_convert_to_data
+import torch
+import torch.nn.functional as F
+from typing import List
 from shared.utils import random_smooth_onehot
+
+STAGE1_MASK = [0, 1, 10, 11]
+STAGE1_REMOVE = [2, 3, 4, 5, 6, 7, 8, 9, 12]
+STAGE2_MASK = [6, 7, 8, 9]
+STAGE2_REMOVE = [2, 3, 4, 5, 12]
+STAGE3_MASK = [2, 3, 4, 5, 12]
+STAGE3_REMOVE = []
 
 def load_data(path: str):
     with open(path, 'r', encoding="utf-8") as f:
@@ -23,38 +31,45 @@ def load_minamo_gan_data(data: list):
         res.append((one['map1'], one['map2'], one['visionSimilarity'], one['topoSimilarity'], True))
     return res
 
-class GinkaDataset(Dataset):
-    def __init__(self, data_path: str, device, minamo: MinamoModel):
-        self.data = load_data(data_path)  # 自定义数据加载函数
-        self.max_size = 32
-        self.minamo = minamo
-        self.device = device
+def apply_curriculum_mask(
+    maps: torch.Tensor,                    # [B, C, H, W]
+    mask_classes: List[int],               # 要遮挡的类别索引
+    remove_classes: List[int],             # 要移除的类别索引
+    mask_ratio: float                      # 遮挡比例 0~1
+) -> torch.Tensor:
+    C, H, W = maps.shape
+    device = maps.device
+    masked_maps = maps.clone()
 
-    def __len__(self):
-        return len(self.data)
+    # Step 1: 移除不需要的类别（全设为 0 类）
+    if remove_classes:
+        remove_mask = masked_maps[remove_classes, :, :].sum(dim=0, keepdim=True) > 0
+        masked_maps[:, :, :][remove_mask.expand(C, -1, -1)] = 0
+        masked_maps[0][remove_mask[0, :, :]] = 1  # 设置为“空地”
+        
+    removed_maps = masked_maps.clone()
 
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        
-        target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        min_main = random.uniform(0.75, 0.9)
-        max_main = random.uniform(0.9, 1)
-        epsilon = random.uniform(0, 0.25)
-        target_smooth = random_smooth_onehot(target, min_main, max_main, epsilon)
-        graph = differentiable_convert_to_data(target_smooth).to(self.device)
-        target = target.to(self.device)
-        vision_feat, topo_feat = self.minamo(target.unsqueeze(0), graph)
-        
-        return {
-            "target_vision_feat": vision_feat,
-            "target_topo_feat": topo_feat,
-            "target": target,
-        }
+    # Step 2: 对指定类别随机遮挡
+    for cls in mask_classes:
+        cls_mask = masked_maps[:, cls] > 0  # 目标类别的像素布尔掩码 [H, W]
+        indices = cls_mask.nonzero(as_tuple=False)  # 所有该类像素坐标
+        num_mask = int(len(indices) * mask_ratio)
+        if num_mask > 0:
+            selected = indices[torch.randperm(len(indices))[:num_mask]]
+            masked_maps[cls, selected[:, 0], selected[:, 1]] = 0
+            masked_maps[0, selected[:, 0], selected[:, 1]] = 1  # 置为“空地”
+
+    return removed_maps, masked_maps
         
 class GinkaWGANDataset(Dataset):
     def __init__(self, data_path: str, device):
         self.data = load_data(data_path)  # 自定义数据加载函数
         self.device = device
+        self.train_stage = 1
+        self.mask_ratio1 = 0.1
+        self.mask_ratio2 = 0.1
+        self.mask_ratio3 = 0.1
+        self.random_ratio = 0.0
 
     def __len__(self):
         return len(self.data)
@@ -63,56 +78,20 @@ class GinkaWGANDataset(Dataset):
         item = self.data[idx]
         
         target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        # min_main = random.uniform(0.8, 0.9)
-        # max_main = random.uniform(0.9, 1)
-        # epsilon = random.uniform(0, 0.2)
-        # target_smooth = random_smooth_onehot(target, min_main, max_main, epsilon).to(self.device)
+
+        if self.train_stage == 1:
+            removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, self.mask_ratio1)
+            removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, self.mask_ratio2)
+            removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, self.mask_ratio3)
+        elif self.train_stage == 2:
+            removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
+            removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, random.uniform(0.1, 0.9))
+            removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, random.uniform(0.1, 0.9))
         
-        return target
+        if self.random_ratio > 0:
+            removed1 = random_smooth_onehot(removed1, min_main=1 - self.random_ratio, max_main=1.0, epsilon=self.random_ratio)
+            removed2 = random_smooth_onehot(removed2, min_main=1 - self.random_ratio, max_main=1.0, epsilon=self.random_ratio)
+            removed3 = random_smooth_onehot(removed3, min_main=1 - self.random_ratio, max_main=1.0, epsilon=self.random_ratio)
+
+        return removed1, masked1, removed2, masked2, removed3, masked3
         
-class MinamoGANDataset(Dataset):
-    def __init__(self, refer_data_path):
-        self.refer = load_minamo_gan_data(load_data(refer_data_path))
-        self.data = list()
-        self.data.extend(random.sample(self.refer, 1000))
-        
-    def set_data(self, data: list):
-        self.data.clear()
-        self.data.extend(data)
-        k = min(len(data) / 4, len(self.refer))
-        self.data.extend(random.sample(self.refer, int(k)))
-        
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        # 假定 map2 是参考地图
-        item = self.data[idx]
-        
-        map1, map2, vis_sim, topo_sim, review = item
-        # 检查是否有 review 标签，没有的话说明是概率分布，不需要任何转换
-        if review:
-            map1 = F.one_hot(torch.LongTensor(map1), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        else:
-            map1 = torch.FloatTensor(map1)
-        map2 = F.one_hot(torch.LongTensor(map2), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
-        
-        min_main = random.uniform(0.75, 0.9)
-        max_main = random.uniform(0.9, 1)
-        epsilon = random.uniform(0, 0.25)
-        
-        if review:
-            map1 = random_smooth_onehot(map1, min_main, max_main, epsilon)
-        map2 = random_smooth_onehot(map2, min_main, max_main, epsilon)
-        
-        graph1 = differentiable_convert_to_data(map1)
-        graph2 = differentiable_convert_to_data(map2)
-        
-        return (
-            map1,
-            map2,
-            torch.FloatTensor([vis_sim]),
-            torch.FloatTensor([topo_sim]),
-            graph1,
-            graph2
-        )

@@ -198,15 +198,15 @@ class GinkaBottleneck(nn.Module):
         return x
 
 class GinkaUNet(nn.Module):
-    def __init__(self, base_ch=64, out_ch=32, feat_dim=1024):
+    def __init__(self, in_ch=32, base_ch=64, out_ch=32):
         """Ginka Model UNet 部分
         """
         super().__init__()
-        self.input = GinkaTransformerEncoder(
-            in_dim=feat_dim, hidden_dim=feat_dim*2, out_dim=2*32*32, # 自动除以 token_size
-            token_size=4, ff_dim=feat_dim*2, num_layers=4
-        )
-        self.down1 = ConvBlock(2, base_ch)
+        # self.input = GinkaTransformerEncoder(
+        #     in_dim=feat_dim, hidden_dim=feat_dim*2, out_dim=2*32*32, # 自动除以 token_size
+        #     token_size=4, ff_dim=feat_dim*2, num_layers=4
+        # )
+        self.down1 = ConvBlock(in_ch, base_ch)
         self.down2 = GinkaGCNFusedEncoder(base_ch, base_ch*2, 16, 16)
         self.down3 = GinkaGCNFusedEncoder(base_ch*2, base_ch*4, 8, 8)
         self.down4 = GinkaEncoder(base_ch*4, base_ch*8)
@@ -223,10 +223,6 @@ class GinkaUNet(nn.Module):
         )
         
     def forward(self, x):
-        B, D = x.shape # [B, 1024]
-        x = x.view(B, 4, D // 4) # [B, 4, 256]
-        x = self.input(x) # [B, 4, 512]
-        x = x.view(B, 2, 32, 32) # [B, 2, 32, 32]
         x1 = self.down1(x) # [B, 64, 32, 32]
         x2 = self.down2(x1) # [B, 128, 16, 16]
         x3 = self.down3(x2) # [B, 256, 8, 8]
@@ -237,5 +233,6 @@ class GinkaUNet(nn.Module):
         x = self.up1(x4, x3) # [B, 256, 8, 8]
         x = self.up2(x, x2) # [B, 128, 16, 16]
         x = self.up3(x, x1) # [B, 64, 32, 32]
+        x = self.final(x) # [B, 32, 32, 32]
         
-        return self.final(x) # [B, 32, 32, 32]
+        return x
