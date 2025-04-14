@@ -31,8 +31,22 @@ def load_minamo_gan_data(data: list):
         res.append((one['map1'], one['map2'], one['visionSimilarity'], one['topoSimilarity'], True))
     return res
 
+def apply_curriculum_remove(
+    maps: torch.Tensor,
+    remove_classes: List[int],             # 要移除的类别索引
+):
+    C, H, W = maps.shape
+    device = maps.device
+    removed_maps = maps.clone()
+
+    remove_mask = removed_maps[remove_classes, :, :].sum(dim=0, keepdim=True) > 0
+    removed_maps[:, :, :][remove_mask.expand(C, -1, -1)] = 0
+    removed_maps[0][remove_mask[0, :, :]] = 1  # 设置为“空地”
+
+    return removed_maps.to(device)
+
 def apply_curriculum_mask(
-    maps: torch.Tensor,                    # [B, C, H, W]
+    maps: torch.Tensor,                    # [C, H, W]
     mask_classes: List[int],               # 要遮挡的类别索引
     remove_classes: List[int],             # 要移除的类别索引
     mask_ratio: float                      # 遮挡比例 0~1
@@ -73,6 +87,42 @@ class GinkaWGANDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
+    
+    def handle_stage1(self, target):
+        removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, self.mask_ratio1)
+        removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, self.mask_ratio2)
+        removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, self.mask_ratio3)
+        
+        return removed1, masked1, removed2, masked2, removed3, masked3
+    
+    def handle_stage2(self, target):
+        removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
+        # 后面两个阶段由于会保留一些类别，所以完全随机遮挡即可
+        removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, random.uniform(0.1, 1))
+        removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, random.uniform(0.1, 1))
+    
+        if self.random_ratio > 0:
+            rd = random.uniform(0, self.random_ratio)
+            masked1 = random_smooth_onehot(masked1, min_main=1 - rd, max_main=1.0, epsilon=rd)
+            masked2 = random_smooth_onehot(masked2, min_main=1 - rd, max_main=1.0, epsilon=rd)
+            masked3 = random_smooth_onehot(masked3, min_main=1 - rd, max_main=1.0, epsilon=rd)
+            
+        return removed1, masked1, removed2, masked2, removed3, masked3
+    
+    def handle_stage3(self, target):
+        rd = random.uniform(0, self.random_ratio)
+        removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
+        removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
+        removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
+        masked1 = random_smooth_onehot(masked1, min_main=1 - rd, max_main=1.0, epsilon=rd)
+        return removed1, masked1, removed2, torch.zeros_like(target), removed3, torch.zeros_like(target)
+    
+    def handle_stage4(self, target):
+        input1 = torch.rand((32, 13, 13))
+        removed1 = apply_curriculum_remove(target, STAGE1_REMOVE)
+        removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
+        removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
+        return removed1, input1, removed2, torch.zeros_like(target), removed3, torch.zeros_like(target)
 
     def __getitem__(self, idx):
         item = self.data[idx]
@@ -80,18 +130,16 @@ class GinkaWGANDataset(Dataset):
         target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
 
         if self.train_stage == 1:
-            removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, self.mask_ratio1)
-            removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, self.mask_ratio2)
-            removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, self.mask_ratio3)
+            return self.handle_stage1(target)
+            
         elif self.train_stage == 2:
-            removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
-            removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, random.uniform(0.1, 0.9))
-            removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, random.uniform(0.1, 0.9))
+            return self.handle_stage2(target)
         
-        if self.random_ratio > 0:
-            removed1 = random_smooth_onehot(removed1, min_main=1 - self.random_ratio, max_main=1.0, epsilon=self.random_ratio)
-            removed2 = random_smooth_onehot(removed2, min_main=1 - self.random_ratio, max_main=1.0, epsilon=self.random_ratio)
-            removed3 = random_smooth_onehot(removed3, min_main=1 - self.random_ratio, max_main=1.0, epsilon=self.random_ratio)
+        elif self.train_stage == 3:
+            return self.handle_stage3(target)
 
-        return removed1, masked1, removed2, masked2, removed3, masked3
+        elif self.train_stage == 4:
+            return self.handle_stage4(target)
+
+        raise RuntimeError(f"Invalid train stage: {self.train_stage}")
         

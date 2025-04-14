@@ -46,14 +46,19 @@ def gen_curriculum(gen, masked1, masked2, masked3, detach=False) -> tuple[torch.
     else:
         return fake1, fake2, fake3
     
-def gen_total(gen, input, detach=False) -> torch.Tensor:
-    fake1 = gen(input, 1)
-    fake2 = gen(fake1, 2)
-    fake3 = gen(fake2, 3)
-    if detach:
-        return fake3.detach()
+def gen_total(gen, input, progress_detach=True, result_detach=False) -> torch.Tensor:
+    if progress_detach:
+        fake1 = gen(input.detach(), 1)
+        fake2 = gen(fake1.detach(), 2)
+        fake3 = gen(fake2.detach(), 3)
     else:
-        return fake3
+        fake1 = gen(input, 1)
+        fake2 = gen(fake1, 2)
+        fake3 = gen(fake2, 3)
+    if result_detach:
+        return fake1.detach(), fake2.detach(), fake3.detach()
+    else:
+        return fake1, fake2, fake3
 
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
@@ -67,6 +72,7 @@ def train():
     train_stage = 1
     mask_ratio = 0.1 # 蒙版区域大小，每次增加 0.1，到达 0.9 之后进入阶段 2 的训练
     random_ratio = 0
+    stage3_epoch = 0 # 第三阶段 epoch 数，100 轮后进入第四阶段
     
     ginka = GinkaModel()
     minamo = MinamoScoreModule()
@@ -108,6 +114,9 @@ def train():
             
         if data_ginka.get("random_ratio") is not None:
             random_ratio = data_ginka["random_ratio"]
+            
+        if data_ginka.get("stage_epoch3") is not None:
+            stage3_epoch = data_ginka["stage_epoch3"]
             
         if data_ginka.get("stage") is not None:
             train_stage = data_ginka["stage"]
@@ -151,18 +160,19 @@ def train():
                 if train_stage == 1 or train_stage == 2:
                     fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, True)
                     
-                    loss_d1, dis1 = criterion.discriminator_loss(minamo, 1, real1, fake1)
-                    loss_d2, dis2 = criterion.discriminator_loss(minamo, 2, real2, fake2)
-                    loss_d3, dis3 = criterion.discriminator_loss(minamo, 3, real3, fake3)
-                    
-                    dis_avg = (dis1 + dis2 + dis3) / 3.0
-                    loss_d_avg = (loss_d1 + loss_d2 + loss_d3) / 3.0
+                elif train_stage == 3 or train_stage == 4:
+                    fake1, fake2, fake3 = gen_total(ginka, masked1, True, True)
+                
+                loss_d1, dis1 = criterion.discriminator_loss(minamo, 1, real1, fake1)
+                loss_d2, dis2 = criterion.discriminator_loss(minamo, 2, real2, fake2)
+                loss_d3, dis3 = criterion.discriminator_loss(minamo, 3, real3, fake3)
+                
+                dis_avg = (dis1 + dis2 + dis3) / 3.0
+                loss_d_avg = (loss_d1 + loss_d2 + loss_d3) / 3.0
 
-                    # 反向传播
-                    loss_d_avg.backward()
-                elif train_stage == 3:
-                    pass
-                    
+                # 反向传播
+                loss_d_avg.backward()
+                
                 optimizer_minamo.step()
                 
                 loss_total_minamo += loss_d_avg.detach()
@@ -188,8 +198,17 @@ def train():
                     loss_total_ginka += loss_g.detach()
                     loss_ce_total += loss_ce.detach()
                     
-                elif train_stage == 3:
-                    pass
+                elif train_stage == 3 or train_stage == 4:
+                    fake1, fake2, fake3 = gen_total(ginka, masked1, True, False)
+                    
+                    loss_g1 = criterion.generator_loss_total(minamo, 1, fake1)
+                    loss_g2 = criterion.generator_loss_total(minamo, 2, fake2)
+                    loss_g3 = criterion.generator_loss_total(minamo, 3, fake3)
+                    
+                    loss_g = (loss_g1 + loss_g2 + loss_g3) / 3.0
+                    loss_g.backward()
+                    optimizer_ginka.step()
+                    loss_total_ginka += loss_g.detach()
             
         avg_loss_ginka = loss_total_ginka.item() / len(dataloader) / g_steps
         avg_loss_minamo = loss_total_minamo.item() / len(dataloader) / c_steps
@@ -202,12 +221,14 @@ def train():
             f"CE: {avg_loss_ce:.8f} | Mask: {mask_ratio:.2f}"
         )
         
-        if avg_loss_ce < 0.5:
+        if avg_loss_ce < 0.1:
             low_loss_epochs += 1
         else:
             low_loss_epochs = 0
             
         if low_loss_epochs >= 5 and train_stage == 2:
+            if random_ratio >= 0.5:
+                train_stage = 3
             random_ratio += 0.1
             random_ratio = min(random_ratio, 0.5)
             low_loss_epochs = 0
@@ -215,10 +236,19 @@ def train():
         if low_loss_epochs >= 5 and train_stage == 1:
             if mask_ratio >= 0.9:
                 train_stage = 2
-
             mask_ratio += 0.1
             mask_ratio = min(mask_ratio, 0.9)
             low_loss_epochs = 0
+            
+        if train_stage == 3:
+            stage3_epoch += 1
+            if stage3_epoch >= 100:
+                train_stage = 4
+                stage3_epoch = 0
+                
+        if train_stage >= 2:
+            # 第二阶段后 L1 损失不再应该生效
+            mask_ratio = 1.0
             
         dataset.train_stage = 2
         dataset_val.train_stage = 2
@@ -235,8 +265,8 @@ def train():
         else:
             g_steps = 1
             
-        if avg_loss_ginka > 0 or avg_loss_minamo > 0:
-            c_steps = int(max(min(5 + (avg_loss_ginka + avg_loss_minamo) * 5, 15), 1))
+        if avg_loss_minamo > 0:
+            c_steps = int(min(5 + avg_loss_minamo * 5, 15))
         else:
             c_steps = 5
         
@@ -251,6 +281,7 @@ def train():
                 "stage": train_stage,
                 "mask_ratio": mask_ratio,
                 "random_ratio": random_ratio,
+                "stage3_epoch": stage3_epoch,
             }, f"result/wgan/ginka-{epoch + 1}.pth")
             torch.save({
                 "model_state": minamo.state_dict(),

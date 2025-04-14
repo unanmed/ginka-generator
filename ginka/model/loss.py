@@ -327,7 +327,7 @@ def immutable_penalty_loss(
         target_mask = F.one_hot(target_mask, num_classes=len(not_allowed)).permute(0, 3, 1, 2).float()
 
     # 差异区域（模型试图改变的地方）
-    penalty = F.cross_entropy(input_mask, target_mask)
+    penalty = F.l1_loss(input_mask, target_mask)
 
     return penalty
 
@@ -405,13 +405,13 @@ class WGANGinkaLoss:
         
         fake_scores, _, _ = critic(fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
-        ce_loss = F.cross_entropy(fake, real)
+        ce_loss = F.l1_loss(fake, real)
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
         
         losses = [
             minamo_loss * self.weight[0],
-            ce_loss * self.weight[1] / mask_ratio * (1 - mask_ratio), # 蒙版越大，交叉熵损失权重越小
+            ce_loss * self.weight[1] * (1 - mask_ratio), # 蒙版越大，交叉熵损失权重越小
             immutable_loss * self.weight[2],
             constraint_loss * self.weight[3]
         ]
@@ -423,4 +423,25 @@ class WGANGinkaLoss:
         
         # print(losses[2].item())
         
-        return sum(losses), minamo_loss, ce_loss / mask_ratio, immutable_loss
+        return sum(losses), minamo_loss, ce_loss, immutable_loss
+    
+    def generator_loss_total(self, critic, stage, fake) -> torch.Tensor:
+        fake_graph = batch_convert_soft_map_to_graph(fake)
+        
+        fake_scores, _, _ = critic(fake, fake_graph, stage)
+        minamo_loss = -torch.mean(fake_scores)
+        immutable_loss = immutable_penalty_loss(fake, fake, STAGE_ALLOWED[stage])
+        constraint_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
+        
+        losses = [
+            minamo_loss * self.weight[0],
+            immutable_loss * self.weight[2],
+            constraint_loss * self.weight[3]
+        ]
+        
+        if stage == 1:
+            # 第一个阶段检查入口存在性
+            entrance_loss = entrance_constraint_loss(fake)
+            losses.append(entrance_loss * self.weight[4])
+            
+        return sum(losses)
