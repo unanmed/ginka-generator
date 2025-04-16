@@ -9,10 +9,10 @@ from typing import List
 from shared.utils import random_smooth_onehot
 
 STAGE1_MASK = [0, 1, 10, 11]
-STAGE1_REMOVE = [2, 3, 4, 5, 6, 7, 8, 9, 12]
+STAGE1_REMOVE = [2, 3, 4, 5, 6, 7, 8, 9, 12, 13]
 STAGE2_MASK = [6, 7, 8, 9]
-STAGE2_REMOVE = [2, 3, 4, 5, 12]
-STAGE3_MASK = [2, 3, 4, 5, 12]
+STAGE2_REMOVE = [2, 3, 4, 5, 12, 13]
+STAGE3_MASK = [2, 3, 4, 5, 12, 13]
 STAGE3_REMOVE = []
 
 def load_data(path: str):
@@ -65,7 +65,7 @@ def apply_curriculum_mask(
 
     # Step 2: 对指定类别随机遮挡
     for cls in mask_classes:
-        cls_mask = masked_maps[:, cls] > 0  # 目标类别的像素布尔掩码 [H, W]
+        cls_mask = masked_maps[cls] > 0  # 目标类别的像素布尔掩码 [H, W]
         indices = cls_mask.nonzero(as_tuple=False)  # 所有该类像素坐标
         num_mask = int(len(indices) * mask_ratio)
         if num_mask > 0:
@@ -139,7 +139,17 @@ class GinkaWGANDataset(Dataset):
             return self.handle_stage3(target)
 
         elif self.train_stage == 4:
-            return self.handle_stage4(target)
+            self.mask_ratio1 = self.mask_ratio2 = self.mask_ratio3 = random.uniform(0, 0.9)
+            self.random_ratio = 0.2
+            mode = random.choices([1, 2, 3, 4], weights=[0.2, 0.2, 0.2, 0.4])
+            if mode == 1:
+                return self.handle_stage1(target)
+            elif mode == 2:
+                return self.handle_stage2(target)
+            elif mode == 3:
+                return self.handle_stage3(target)
+            else:
+                return self.handle_stage4(target)
 
         raise RuntimeError(f"Invalid train stage: {self.train_stage}")
         

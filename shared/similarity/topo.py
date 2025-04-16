@@ -44,7 +44,7 @@ class GinkaTopologicalGraphs:
 TILE_TYPE = set(range(13))
 BRANCH_TYPE = {6, 7, 8, 9}
 ENTRANCE_TYPE = {10, 11}
-RESOURCE_TYPE = {0, 2, 3, 4, 5, 10, 11, 12}
+RESOURCE_TYPE = {0, 2, 3, 4, 5, 10, 11, 12, 13}
 
 directions: List[Tuple[int, int]] = [
     (-1, 0), (1, 0), (0, -1), (0, 1)

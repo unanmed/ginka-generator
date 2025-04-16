@@ -15,7 +15,8 @@ const numMap: Record<number, number> = {
     92: 11, // 箭头
     93: 11, // 箭头
     94: 11, // 箭头
-    53: 12 // 道具
+    53: 12, // 道具
+    29: 13, // 绿宝石
 };
 
 const apeiriaMap: Record<number, number> = {
@@ -27,7 +28,7 @@ const apeiriaMap: Record<number, number> = {
     23: 2, // 红钥匙
     27: 3, // 红宝石
     28: 4, // 蓝宝石
-    29: 0, // 绿宝石
+    29: 13, // 绿宝石
     31: 5, // 红血瓶
     32: 5, // 蓝血瓶
     33: 5, // 绿血瓶

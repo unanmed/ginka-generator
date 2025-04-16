@@ -11,13 +11,13 @@ from shared.similarity.topo import overall_similarity, build_topological_graph
 from shared.similarity.vision import calculate_visual_similarity
 
 CLASS_NUM = 32
-ILLEGAL_MAX_NUM = 12
+ILLEGAL_MAX_NUM = 13
 
 STAGE_ALLOWED = [
     [],
     [0, 1, 10, 11],
-    [6, 7, 8, 9,],
-    [2, 3, 4, 5, 12]
+    [6, 7, 8, 9],
+    [2, 3, 4, 5, 12, 13]
 ]
 
 def get_not_allowed(classes: list[int], include_illegal=False):
@@ -302,11 +302,14 @@ def js_divergence(p, q, eps=1e-8):
     # log_softmax 以供 kl_div 使用
     log_p = torch.log(p + eps)
     log_q = torch.log(q + eps)
+    log_m = torch.log(m + eps)
+    
+    nn.KLDivLoss
 
-    kl_pm = F.kl_div(log_p, m, reduction='batchmean', log_target=False)  # KL(p || m)
-    kl_qm = F.kl_div(log_q, m, reduction='batchmean', log_target=False)  # KL(q || m)
+    kl_pm = F.kl_div(log_p, log_m, reduction='batchmean', log_target=True)  # KL(p || m)
+    kl_qm = F.kl_div(log_q, log_m, reduction='batchmean', log_target=True)  # KL(q || m)
 
-    return torch.clamp(0.5 * (kl_pm + kl_qm), max=1.0)
+    return 0.5 * (kl_pm + kl_qm)
 
 def immutable_penalty_loss(
     pred: torch.Tensor, input: torch.Tensor, modifiable_classes: list[int]
@@ -332,8 +335,8 @@ def immutable_penalty_loss(
     return penalty
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=100, weight=[1, 0.4, 10, 0.2, 0.2]):
-        # weight: 判别器损失，L1 损失，不可修改类型损失
+    def __init__(self, lambda_gp=100, weight=[1, 0.4, 25, 0.2, 0.2, 0.02]):
+        # weight: 判别器损失，L1 损失，不可修改类型损失，图块类型损失，入口存在性损失，多样性损失
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
         
@@ -399,7 +402,7 @@ class WGANGinkaLoss:
         
         return vis_sim, topo_sim
 
-    def generator_loss(self, critic, stage, mask_ratio, real, fake, input) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def generator_loss(self, critic, stage, mask_ratio, real, fake: torch.Tensor, input) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """ 生成器损失函数 """
         fake_graph = batch_convert_soft_map_to_graph(fake)
         
@@ -409,11 +412,14 @@ class WGANGinkaLoss:
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
         
+        fake_a, fake_b = fake.chunk(2, dim=0)
+        
         losses = [
             minamo_loss * self.weight[0],
             ce_loss * self.weight[1] * (1 - mask_ratio), # 蒙版越大，交叉熵损失权重越小
             immutable_loss * self.weight[2],
-            constraint_loss * self.weight[3]
+            constraint_loss * self.weight[3],
+            -js_divergence(fake_a, fake_b) * self.weight[5],
         ]
         
         if stage == 1:
@@ -421,7 +427,7 @@ class WGANGinkaLoss:
             entrance_loss = entrance_constraint_loss(fake)
             losses.append(entrance_loss * self.weight[4])
         
-        # print(losses[2].item())
+        # print(-js_divergence(fake_a, fake_b).item())
         
         return sum(losses), minamo_loss, ce_loss, immutable_loss
     
@@ -433,10 +439,13 @@ class WGANGinkaLoss:
         immutable_loss = immutable_penalty_loss(fake, fake, STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(fake) + inner_constraint_loss(fake)
         
+        fake_a, fake_b = fake.chunk(2, dim=0)
+        
         losses = [
             minamo_loss * self.weight[0],
             immutable_loss * self.weight[2],
-            constraint_loss * self.weight[3]
+            constraint_loss * self.weight[3],
+            -js_divergence(fake_a, fake_b) * self.weight[5],
         ]
         
         if stage == 1:

@@ -70,9 +70,9 @@ def train():
     # 1 代表课程学习阶段，2 代表课程学习后，逐渐转为联合学习的阶段
     # 3 代表课程学习后的联合遮挡学习阶段，4 代表最后随机输入的联合学习阶段
     train_stage = 1
-    mask_ratio = 0.1 # 蒙版区域大小，每次增加 0.1，到达 0.9 之后进入阶段 2 的训练
+    mask_ratio = 0.2 # 蒙版区域大小，每次增加 0.1，到达 0.9 之后进入阶段 2 的训练
     random_ratio = 0
-    stage3_epoch = 0 # 第三阶段 epoch 数，100 轮后进入第四阶段
+    stage3_epoch = 0 # 第三阶段 epoch 数，若干轮后进入第四阶段
     
     ginka = GinkaModel()
     minamo = MinamoScoreModule()
@@ -216,9 +216,9 @@ def train():
         avg_dis = dis_total.item() / len(dataloader) / c_steps
         tqdm.write(
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
-            f"Epoch: {epoch + 1} | W: {avg_dis:.8f} | " +
-            f"G: {avg_loss_ginka:.8f} | D: {avg_loss_minamo:.8f} | " +
-            f"CE: {avg_loss_ce:.8f} | Mask: {mask_ratio:.2f}"
+            f"Epoch: {epoch + 1} | S: {train_stage} | W: {avg_dis:.6f} | " +
+            f"G: {avg_loss_ginka:.6f} | D: {avg_loss_minamo:.6f} | " +
+            f"CE: {avg_loss_ce:.6f} | M: {mask_ratio:.1f} | R: {random_ratio:.1f}"
         )
         
         if avg_loss_ce < 0.1:
@@ -226,23 +226,24 @@ def train():
         else:
             low_loss_epochs = 0
             
-        if low_loss_epochs >= 5 and train_stage == 2:
+        if low_loss_epochs >= 3 and train_stage == 2:
             if random_ratio >= 0.5:
                 train_stage = 3
-            random_ratio += 0.1
+            random_ratio += 0.2
             random_ratio = min(random_ratio, 0.5)
             low_loss_epochs = 0
         
-        if low_loss_epochs >= 5 and train_stage == 1:
+        if low_loss_epochs >= 3 and train_stage == 1:
             if mask_ratio >= 0.9:
                 train_stage = 2
-            mask_ratio += 0.1
+            mask_ratio += 0.2
             mask_ratio = min(mask_ratio, 0.9)
             low_loss_epochs = 0
             
         if train_stage == 3:
             stage3_epoch += 1
-            if stage3_epoch >= 100:
+            # 十轮足够了
+            if stage3_epoch >= 10:
                 train_stage = 4
                 stage3_epoch = 0
                 
@@ -250,8 +251,8 @@ def train():
             # 第二阶段后 L1 损失不再应该生效
             mask_ratio = 1.0
             
-        dataset.train_stage = 2
-        dataset_val.train_stage = 2
+        dataset.train_stage = train_stage
+        dataset_val.train_stage = train_stage
         dataset.random_ratio = random_ratio
         dataset_val.random_ratio = random_ratio
         dataset.mask_ratio1 = dataset.mask_ratio2 = dataset.mask_ratio3 = mask_ratio
@@ -292,19 +293,23 @@ def train():
             with torch.no_grad():
                 for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
                     real1, masked1, real2, masked2, real3, masked3 = [item.to(device) for item in batch]
-                    if train_stage == 1:
+                    if train_stage == 1 or train_stage == 2:
                         fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, True)
-                        fake1 = torch.argmax(fake1, dim=1).cpu().numpy()
-                        fake2 = torch.argmax(fake2, dim=1).cpu().numpy()
-                        fake3 = torch.argmax(fake3, dim=1).cpu().numpy()
+                            
+                    elif train_stage == 3 or train_stage == 4:
+                        fake1, fake2, fake3 = gen_total(ginka, masked1, True, True)
                         
-                        for i in range(fake1.shape[0]):
-                            for key, one in enumerate([fake1, fake2, fake3]):
-                                map_matrix = one[i]
-                                image = matrix_to_image_cv(map_matrix, tile_dict)
-                                cv2.imwrite(f"result/ginka_img/{idx}_{key}.png", image)
+                    fake1 = torch.argmax(fake1, dim=1).cpu().numpy()
+                    fake2 = torch.argmax(fake2, dim=1).cpu().numpy()
+                    fake3 = torch.argmax(fake3, dim=1).cpu().numpy()
+                        
+                    for i in range(fake1.shape[0]):
+                        for key, one in enumerate([fake1, fake2, fake3]):
+                            map_matrix = one[i]
+                            image = matrix_to_image_cv(map_matrix, tile_dict)
+                            cv2.imwrite(f"result/ginka_img/{idx}_{key}.png", image)
 
-                            idx += 1
+                        idx += 1
     
     print("Train ended.")
     torch.save({

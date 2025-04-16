@@ -13,7 +13,7 @@ export const tileType = new Set(
 );
 const branchType = new Set([6, 7, 8, 9]);
 const entranceType = new Set([10, 11]);
-const resourceType = new Set([0, 2, 3, 4, 5, 10, 11, 12]);
+const resourceType = new Set([0, 2, 3, 4, 5, 10, 11, 12, 13]);
 
 export const directions: [number, number][] = [
     [-1, 0],
