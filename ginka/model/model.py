@@ -27,7 +27,7 @@ class GinkaModel(nn.Module):
         x = self.input(x)
         x = self.unet(x)
         x = self.output(x, stage)
-        return F.softmax(x, dim=1)
+        return x
     
 # 检查显存占用
 if __name__ == "__main__":

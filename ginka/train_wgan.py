@@ -201,9 +201,12 @@ def train():
                 elif train_stage == 3 or train_stage == 4:
                     fake1, fake2, fake3 = gen_total(ginka, masked1, True, False)
                     
-                    loss_g1 = criterion.generator_loss_total(minamo, 1, fake1)
-                    loss_g2 = criterion.generator_loss_total(minamo, 2, fake2)
-                    loss_g3 = criterion.generator_loss_total(minamo, 3, fake3)
+                    if train_stage == 3:
+                        loss_g1 = criterion.generator_loss_total_with_input(minamo, 1, fake1, masked1)
+                    else:
+                        loss_g1 = criterion.generator_loss_total(minamo, 1, fake1)
+                    loss_g2 = criterion.generator_loss_total_with_input(minamo, 2, fake2, fake1)
+                    loss_g3 = criterion.generator_loss_total_with_input(minamo, 3, fake3, fake2)
                     
                     loss_g = (loss_g1 + loss_g2 + loss_g3) / 3.0
                     loss_g.backward()
@@ -221,7 +224,7 @@ def train():
             f"CE: {avg_loss_ce:.6f} | M: {mask_ratio:.1f} | R: {random_ratio:.1f}"
         )
         
-        if avg_loss_ce < 0.1:
+        if avg_loss_ce < 0.5:
             low_loss_epochs += 1
         else:
             low_loss_epochs = 0
