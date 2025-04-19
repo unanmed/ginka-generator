@@ -64,7 +64,7 @@ def outer_border_constraint_loss(pred: torch.Tensor, allowed_classes=[1, 11]):
     
     return loss_unallowed
 
-def inner_constraint_loss(pred: torch.Tensor, allowed=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]):
+def inner_constraint_loss(pred: torch.Tensor, allowed=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13]):
     """限定内部允许出现的图块种类
 
     Args:
@@ -235,6 +235,21 @@ def adaptive_count_loss(
 
     return total_loss
 
+def input_head_illegal_loss(input_map, allowed_classes=(0, 1)):
+    C = input_map.shape[1]
+    mask = torch.ones(C, device=input_map.device)
+    mask[list(allowed_classes)] = 0  # 屏蔽允许的类别，其余为 1
+    illegal_class_penalty = (input_map * mask.view(1, -1, 1, 1)).sum() / input_map.numel()
+    
+    return illegal_class_penalty
+
+def input_head_wall_loss(input_map, max_wall_ratio=0.2, wall_class=1):
+    wall_prob = input_map[:, wall_class]  # [B, H, W]
+    wall_ratio = wall_prob.mean()         # 计算平均墙体占比
+    wall_penalty = torch.clamp(wall_ratio - max_wall_ratio, min=0.0)  # 超过则惩罚
+    
+    return wall_penalty
+
 class GinkaLoss(nn.Module):
     def __init__(self, minamo: MinamoModel, weight=[0.5, 0.2, 0.1, 0.2]):
         """Ginka Model 损失函数部分
@@ -310,7 +325,7 @@ def js_divergence(p, q, eps=1e-6, softmax=False):
     kl_pm = F.kl_div(log_p, log_m, reduction='batchmean', log_target=True)  # KL(p || m)
     kl_qm = F.kl_div(log_q, log_m, reduction='batchmean', log_target=True)  # KL(q || m)
 
-    return 0.5 * (kl_pm + kl_qm)
+    return torch.clamp(0.5 * (kl_pm + kl_qm), max=10)
 
 def immutable_penalty_loss(
     pred: torch.Tensor, input: torch.Tensor, modifiable_classes: list[int]
@@ -322,7 +337,6 @@ def immutable_penalty_loss(
         input: 模型输出 [B, C, H, W]，概率分布 (softmax 后)
         target: 原始输入图 [B, C, H, W]，概率分布 (softmax 后)
         modifiable_classes: 允许被修改的类别列表
-        penalty_weight: 对非允许修改区域的惩罚系数
     """
     not_allowed = get_not_allowed(modifiable_classes, include_illegal=True)
     input_mask = pred[:, not_allowed, :, :]
@@ -330,14 +344,17 @@ def immutable_penalty_loss(
         target_mask = torch.argmax(input[:, not_allowed, :, :], dim=1)
         target_mask = F.one_hot(target_mask, num_classes=len(not_allowed)).permute(0, 3, 1, 2).float()
 
-    # 差异区域（模型试图改变的地方）
-    penalty = F.l1_loss(input_mask, target_mask)
+    target_mask = torch.log(target_mask + 1e-6)  # 转换为 log 概率分布
+    input_mask = torch.log(input_mask + 1e-6)  # 转换为 log 概率分布
 
-    return penalty
+    # 差异区域（模型试图改变的地方）
+    penalty = F.kl_div(input_mask, target_mask, reduction='batchmean', log_target=True)
+
+    return torch.clamp(penalty, max=1)
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=100, weight=[1, 0.4, 25, 0.2, 0.2, 0.01]):
-        # weight: 判别器损失，L1 损失，不可修改类型损失，图块类型损失，入口存在性损失，多样性损失
+    def __init__(self, lambda_gp=100, weight=[1, 0.5, 10, 0.2, 0.2, 0.2]):
+        # weight: 判别器损失，CE 损失，不可修改类型损失，图块类型损失，入口存在性损失，多样性损失
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
         
@@ -402,18 +419,18 @@ class WGANGinkaLoss:
         
         fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
-        ce_loss = F.cross_entropy(fake, real)
+        ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio)
         immutable_loss = immutable_penalty_loss(probs_fake, F.softmax(input, dim=1), STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
-        fake_a, fake_b = fake.chunk(2, dim=0)
+        # fake_a, fake_b = fake.chunk(2, dim=0)
         
         losses = [
             minamo_loss * self.weight[0],
-            ce_loss * self.weight[1] * (1 - mask_ratio), # 蒙版越大，交叉熵损失权重越小
+            ce_loss * self.weight[1], # 蒙版越大，交叉熵损失权重越小
             immutable_loss * self.weight[2],
             constraint_loss * self.weight[3],
-            -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
+            # -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
         ]
         
         if stage == 1:
@@ -433,12 +450,12 @@ class WGANGinkaLoss:
         minamo_loss = -torch.mean(fake_scores)
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
-        fake_a, fake_b = fake.chunk(2, dim=0)
+        # fake_a, fake_b = fake.chunk(2, dim=0)
         
         losses = [
             minamo_loss * self.weight[0],
             constraint_loss * self.weight[3],
-            -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
+            # -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
         ]
         
         if stage == 1:
@@ -457,13 +474,13 @@ class WGANGinkaLoss:
         immutable_loss = immutable_penalty_loss(probs_fake, F.softmax(input, dim=1), STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
-        fake_a, fake_b = fake.chunk(2, dim=0)
+        # fake_a, fake_b = fake.chunk(2, dim=0)
         
         losses = [
             minamo_loss * self.weight[0],
             immutable_loss * self.weight[2],
             constraint_loss * self.weight[3],
-            -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
+            # -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
         ]
         
         if stage == 1:
@@ -471,4 +488,15 @@ class WGANGinkaLoss:
             entrance_loss = entrance_constraint_loss(probs_fake)
             losses.append(entrance_loss * self.weight[4])
             
+        return sum(losses)
+
+    def generator_input_head_loss(self, probs: torch.Tensor) -> torch.Tensor:
+        probs_a, probs_b = probs.chunk(2, dim=0)
+        
+        losses = [
+            input_head_illegal_loss(probs),
+            input_head_wall_loss(probs),
+            -js_divergence(probs_a, probs_b, softmax=False) * 0.2
+        ]
+        
         return sum(losses)

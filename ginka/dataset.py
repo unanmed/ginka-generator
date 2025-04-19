@@ -83,12 +83,12 @@ class GinkaWGANDataset(Dataset):
         self.mask_ratio1 = 0.1
         self.mask_ratio2 = 0.1
         self.mask_ratio3 = 0.1
-        self.random_ratio = 0.0
 
     def __len__(self):
         return len(self.data)
     
     def handle_stage1(self, target):
+        # 课程学习第一阶段，蒙版填充
         removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, self.mask_ratio1)
         removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, self.mask_ratio2)
         removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, self.mask_ratio3)
@@ -96,33 +96,30 @@ class GinkaWGANDataset(Dataset):
         return removed1, masked1, removed2, masked2, removed3, masked3
     
     def handle_stage2(self, target):
+        # 课程学习第二阶段，完全随机蒙版
         removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
         # 后面两个阶段由于会保留一些类别，所以完全随机遮挡即可
         removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, random.uniform(0.1, 1))
         removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, random.uniform(0.1, 1))
-    
-        if self.random_ratio > 0:
-            rd = random.uniform(0, self.random_ratio)
-            masked1 = random_smooth_onehot(masked1, min_main=1 - rd, max_main=1.0, epsilon=rd)
-            masked2 = random_smooth_onehot(masked2, min_main=1 - rd, max_main=1.0, epsilon=rd)
-            masked3 = random_smooth_onehot(masked3, min_main=1 - rd, max_main=1.0, epsilon=rd)
             
         return removed1, masked1, removed2, masked2, removed3, masked3
     
     def handle_stage3(self, target):
+        # 第三阶段，联合生成，输入随机蒙版
         rd = random.uniform(0, self.random_ratio)
         removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
         removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
         removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
         masked1 = random_smooth_onehot(masked1, min_main=1 - rd, max_main=1.0, epsilon=rd)
         return removed1, masked1, removed2, torch.zeros_like(target), removed3, torch.zeros_like(target)
-    
+
     def handle_stage4(self, target):
-        input1 = torch.rand((32, 13, 13))
+        # 第四阶段，与第二阶段交替进行，完全随机输入
         removed1 = apply_curriculum_remove(target, STAGE1_REMOVE)
         removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
         removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
-        return removed1, input1, removed2, torch.zeros_like(target), removed3, torch.zeros_like(target)
+        rand = torch.rand(32, 32, 32, device=target.device)
+        return removed1, rand, removed2, torch.zeros_like(target), removed3, torch.zeros_like(target)
 
     def __getitem__(self, idx):
         item = self.data[idx]
@@ -137,19 +134,9 @@ class GinkaWGANDataset(Dataset):
         
         elif self.train_stage == 3:
             return self.handle_stage3(target)
-
+        
         elif self.train_stage == 4:
-            self.mask_ratio1 = self.mask_ratio2 = self.mask_ratio3 = random.uniform(0, 0.9)
-            self.random_ratio = 0.2
-            mode = random.choices([1, 2, 3, 4], weights=[0.2, 0.2, 0.2, 0.4])
-            if mode == 1:
-                return self.handle_stage1(target)
-            elif mode == 2:
-                return self.handle_stage2(target)
-            elif mode == 3:
-                return self.handle_stage3(target)
-            else:
-                return self.handle_stage4(target)
+            return self.handle_stage4(target)
 
         raise RuntimeError(f"Invalid train stage: {self.train_stage}")
         
