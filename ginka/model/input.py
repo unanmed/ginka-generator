@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 
 class RandomInputHead(nn.Module):
-    def __init__(self, in_size=(32, 32), out_size=(32, 32)):
+    def __init__(self):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(1, 32, 3, padding=1, padding_mode='replicate'),
+            nn.Conv2d(32, 32, 3, padding=1, padding_mode='replicate'),
             nn.InstanceNorm2d(32),
             nn.ELU(),
             
@@ -18,6 +18,7 @@ class RandomInputHead(nn.Module):
             nn.ELU(),
         )
         self.out_conv = nn.Sequential(
+            nn.AdaptiveMaxPool2d((13, 13)),
             nn.Conv2d(128, 32, 1),
         )
         

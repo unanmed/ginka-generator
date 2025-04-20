@@ -106,11 +106,9 @@ class GinkaWGANDataset(Dataset):
     
     def handle_stage3(self, target):
         # 第三阶段，联合生成，输入随机蒙版
-        rd = random.uniform(0, self.random_ratio)
         removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
         removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
         removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
-        masked1 = random_smooth_onehot(masked1, min_main=1 - rd, max_main=1.0, epsilon=rd)
         return removed1, masked1, removed2, torch.zeros_like(target), removed3, torch.zeros_like(target)
 
     def handle_stage4(self, target):

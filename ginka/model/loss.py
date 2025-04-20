@@ -419,18 +419,18 @@ class WGANGinkaLoss:
         
         fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
-        ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio)
+        ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio) # 蒙版越大，交叉熵损失权重越小
         immutable_loss = immutable_penalty_loss(probs_fake, F.softmax(input, dim=1), STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
-        # fake_a, fake_b = fake.chunk(2, dim=0)
+        fake_a, fake_b = fake.chunk(2, dim=0)
         
         losses = [
             minamo_loss * self.weight[0],
-            ce_loss * self.weight[1], # 蒙版越大，交叉熵损失权重越小
+            ce_loss * self.weight[1],
             immutable_loss * self.weight[2],
             constraint_loss * self.weight[3],
-            # -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
+            -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
         ]
         
         if stage == 1:
@@ -450,12 +450,12 @@ class WGANGinkaLoss:
         minamo_loss = -torch.mean(fake_scores)
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
-        # fake_a, fake_b = fake.chunk(2, dim=0)
+        fake_a, fake_b = fake.chunk(2, dim=0)
         
         losses = [
             minamo_loss * self.weight[0],
             constraint_loss * self.weight[3],
-            # -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
+            -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
         ]
         
         if stage == 1:
@@ -474,13 +474,13 @@ class WGANGinkaLoss:
         immutable_loss = immutable_penalty_loss(probs_fake, F.softmax(input, dim=1), STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
-        # fake_a, fake_b = fake.chunk(2, dim=0)
+        fake_a, fake_b = fake.chunk(2, dim=0)
         
         losses = [
             minamo_loss * self.weight[0],
             immutable_loss * self.weight[2],
             constraint_loss * self.weight[3],
-            # -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
+            -js_divergence(fake_a, fake_b, softmax=True) * self.weight[5],
         ]
         
         if stage == 1:

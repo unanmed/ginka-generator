@@ -33,31 +33,32 @@ def parse_arguments():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--checkpoint", type=int, default=5)
     parser.add_argument("--load_optim", type=bool, default=True)
+    parser.add_argument("--curr_epoch", type=int, default=20) # 课程学习至少多少 epoch
     args = parser.parse_args()
     return args
 
 def gen_curriculum(gen, masked1, masked2, masked3, detach=False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    fake1: torch.Tensor = gen(masked1, 1)
-    fake2: torch.Tensor = gen(masked2, 2)
-    fake3: torch.Tensor = gen(masked3, 3)
+    fake1, _ = gen(masked1, 1)
+    fake2, _ = gen(masked2, 2)
+    fake3, _ = gen(masked3, 3)
     if detach:
         return fake1.detach(), fake2.detach(), fake3.detach()
     else:
         return fake1, fake2, fake3
     
-def gen_total(gen, input, progress_detach=True, result_detach=False) -> torch.Tensor:
+def gen_total(gen, input, progress_detach=True, result_detach=False, random=False) -> torch.Tensor:
     if progress_detach:
-        fake1 = gen(input.detach(), 1)
-        fake2 = gen(fake1.detach(), 2)
-        fake3 = gen(fake2.detach(), 3)
+        fake1, x_in = gen(input.detach(), 1, random)
+        fake2, _ = gen(F.softmax(fake1.detach()), 2)
+        fake3, _ = gen(F.softmax(fake2.detach()), 3)
     else:
-        fake1 = gen(input, 1)
-        fake2 = gen(fake1, 2)
-        fake3 = gen(fake2, 3)
+        fake1, x_in = gen(input, 1, random)
+        fake2, _ = gen(F.softmax(fake1), 2)
+        fake3, _ = gen(F.softmax(fake2), 3)
     if result_detach:
-        return fake1.detach(), fake2.detach(), fake3.detach()
+        return fake1.detach(), fake2.detach(), fake3.detach(), x_in.detach()
     else:
-        return fake1, fake2, fake3
+        return fake1, fake2, fake3, x_in
 
 def train():
     print(f"Using {'cuda' if torch.cuda.is_available() else 'cpu'} to train model.")
@@ -169,14 +170,9 @@ def train():
                     if train_stage == 1 or train_stage == 2:
                         fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, True)
                         
-                    elif train_stage == 3:
-                        fake1, fake2, fake3 = gen_total(ginka, masked1, True, True)
-                    
-                    elif train_stage == 4:
-                        input = F.softmax(ginka_head(masked1), dim=1)
-                        fake1, fake2, fake3 = gen_total(ginka, input, True, True)
+                    elif train_stage == 3 or train_stage == 4:
+                        fake1, fake2, fake3, _ = gen_total(ginka, masked1, True, True, train_stage == 4)
                         
-                
                 loss_d1, dis1 = criterion.discriminator_loss(minamo, 1, real1, fake1)
                 loss_d2, dis2 = criterion.discriminator_loss(minamo, 2, real2, fake2)
                 loss_d3, dis3 = criterion.discriminator_loss(minamo, 3, real3, fake3)
@@ -214,9 +210,7 @@ def train():
                     loss_ce_total += loss_ce.detach()
                     
                 elif train_stage == 3 or train_stage == 4:
-                    input = masked1 if train_stage == 3 else F.softmax(ginka_head(masked1), dim=1)
-
-                    fake1, fake2, fake3 = gen_total(ginka, input, True, False)
+                    fake1, fake2, fake3, x_in = gen_total(ginka, input, True, False)
                     
                     if train_stage == 3:
                         loss_g1 = criterion.generator_loss_total_with_input(minamo, 1, fake1, input)
@@ -224,6 +218,10 @@ def train():
                         loss_g1 = criterion.generator_loss_total(minamo, 1, fake1)
                     loss_g2 = criterion.generator_loss_total_with_input(minamo, 2, fake2, fake1)
                     loss_g3 = criterion.generator_loss_total_with_input(minamo, 3, fake3, fake2)
+                    
+                    if train_stage == 4:
+                        loss_head = criterion.generator_input_head_loss(x_in)
+                        loss_head.backward()
                     
                     loss_g = (loss_g1 + loss_g2 + loss_g3) / 3.0
                     loss_g.backward()
@@ -246,24 +244,30 @@ def train():
         else:
             low_loss_epochs = 0
         
-        if low_loss_epochs >= 3 and train_stage == 1:
+        # 训练流程控制
+        
+        if low_loss_epochs >= 3 and train_stage == 1 and stage_epoch >= args.curr_epoch:
             if mask_ratio >= 0.9:
                 train_stage = 2
-                stage_epoch = 0
             mask_ratio += 0.2
             mask_ratio = min(mask_ratio, 0.9)
             low_loss_epochs = 0
+            stage_epoch = 0
             
-        if train_stage == 3 or train_stage == 2:
+        if (train_stage == 3 or train_stage == 2) and not last_stage:
             if stage_epoch >= 25:
                 train_stage += 1
                 stage_epoch = 0
                 
-        if train_stage >= 3:
+            if train_stage == 4:
+                last_stage = True
+                
+        if train_stage >= 3 or last_stage:
             # 第三阶段后交叉熵损失不再应该生效
             mask_ratio = 1.0
             
         if last_stage:
+            mask_ratio = 1.0
             if train_stage == 2 and stage_epoch % 5 == 0:
                 train_stage = 4
             
@@ -317,7 +321,7 @@ def train():
                             
                     elif train_stage == 3 or train_stage == 4:
                         input = masked1 if train_stage == 3 else F.softmax(ginka_head(masked1), dim=1)
-                        fake1, fake2, fake3 = gen_total(ginka, input, True, True)
+                        fake1, fake2, fake3, _ = gen_total(ginka, input, True, True)
                         
                     fake1 = torch.argmax(fake1, dim=1).cpu().numpy()
                     fake2 = torch.argmax(fake2, dim=1).cpu().numpy()
