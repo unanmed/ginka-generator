@@ -1,3 +1,5 @@
+import { GinkaConfig } from './types';
+
 const numMap: Record<number, number> = {
     0: 0, // 空地
     1: 1, // 墙壁
@@ -16,40 +18,10 @@ const numMap: Record<number, number> = {
     93: 11, // 箭头
     94: 11, // 箭头
     53: 12, // 道具
-    29: 13, // 绿宝石
+    29: 13 // 绿宝石
 };
 
-const apeiriaMap: Record<number, number> = {
-    0: 0, // 空地
-    1: 1, // 墙壁
-    224: 1, // 吸血鬼，视为墙壁
-    21: 2, // 黄钥匙
-    22: 2, // 蓝钥匙
-    23: 2, // 红钥匙
-    27: 3, // 红宝石
-    28: 4, // 蓝宝石
-    29: 13, // 绿宝石
-    31: 5, // 红血瓶
-    32: 5, // 蓝血瓶
-    33: 5, // 绿血瓶
-    34: 5, // 黄血瓶
-    81: 6, // 门
-    201: 7, // 弱怪
-    202: 8, // 中怪
-    203: 9, // 强怪
-    87: 10, // 楼梯
-    88: 10, // 楼梯
-    161: 11, // 箭头
-    162: 11, // 箭头
-    163: 11, // 箭头
-    164: 11, // 箭头
-    53: 12, // 幸运金币
-    50: 12, // 飞
-    49: 12, // 炸
-    47: 12 // 破
-};
-
-export interface ApeiriaEnemy {
+export interface Enemy {
     hp: number;
     atk: number;
     def: number;
@@ -58,95 +30,81 @@ export interface ApeiriaEnemy {
 function convert(
     map: number[][],
     [x, y, w, h]: [number, number, number, number],
-    name: string,
-    floorId: string,
-    numMap: Record<number, number>
+    config: GinkaConfig,
+    enemyMap: Record<number, Enemy>
 ) {
     const clipped: number[][] = [];
 
+    // 1. 裁剪
     for (let nx = x; nx < x + w; nx++) {
         const row: number[] = [];
         for (let ny = y; ny < y + h; ny++) {
-            const num = numMap[map[nx][ny]];
-            if (num === void 0) {
-                console.log(
-                    `⚠️  魔塔 ${name} 的楼层 ${floorId} 中出现未知图块类型：${map[nx][ny]}`
-                );
-            }
-            row.push(num ?? 0);
+            row.push(map[ny][nx]);
         }
         clipped.push(row);
+    }
+
+    // 2. 转换怪物
+    const enemySet = new Set<Enemy>();
+    for (let nx = 0; nx < w; nx++) {
+        for (let ny = 0; ny < h; ny++) {
+            const tile = clipped[ny][nx];
+            if (tile === 201 || tile === 202 || tile === 203) continue;
+            const enemy = enemyMap[tile];
+            if (!enemy) continue;
+            enemySet.add(enemy);
+        }
+    }
+    const attrs = [...enemySet].map(v => (v.atk + v.def) * v.hp);
+    const maxAttr = Math.max(...attrs);
+    const minAttr = Math.min(...attrs);
+    const delta = maxAttr - minAttr;
+    for (let ny = 0; ny < w; ny++) {
+        for (let nx = 0; nx < h; nx++) {
+            const tile = clipped[ny][nx];
+            if (tile === 201 || tile === 202 || tile === 203) continue;
+            const enemy = enemyMap[tile];
+            if (!enemy) continue;
+            // 替换为弱怪/中怪/强怪
+            const attr = (enemy.atk + enemy.def) * enemy.hp;
+            const ad = attr - minAttr;
+            if (ad < delta / 3) {
+                clipped[ny][nx] = 7;
+            } else if (ad < (delta * 2) / 3) {
+                clipped[ny][nx] = 8;
+            } else {
+                clipped[ny][nx] = 9;
+            }
+        }
+    }
+
+    // 3. 转换一般图块
+    const mapping: Record<number, number> = {};
+    config.mapping.wall.forEach(v => (mapping[v] = 1));
+    config.mapping.key.forEach(v => (mapping[v] = 2));
+    config.mapping.redGem.forEach(v => (mapping[v] = 3));
+    config.mapping.blueGem.forEach(v => (mapping[v] = 4));
+    config.mapping.potion.forEach(v => (mapping[v] = 5));
+    config.mapping.door.forEach(v => (mapping[v] = 6));
+    config.mapping.item.forEach(v => (mapping[v] = 12));
+    config.mapping.greenGem.forEach(v => (mapping[v] = 13));
+    for (let nx = 0; nx < w; nx++) {
+        for (let ny = 0; ny < h; ny++) {
+            const tile = clipped[ny][nx];
+            if (mapping[tile]) clipped[ny][nx] = mapping[tile];
+            else if (numMap[tile]) clipped[ny][nx] = numMap[tile];
+            else clipped[ny][nx] = 0;
+        }
     }
 
     return clipped;
 }
 
-function convertApeiriaEnemy(
-    map: number[][],
-    enemyMap: Record<number, ApeiriaEnemy>
-) {
-    const width = map[0].length;
-    const height = map.length;
-    const enemy = new Set<ApeiriaEnemy>();
-    for (let ny = 0; ny < height; ny++) {
-        for (let nx = 0; nx < width; nx++) {
-            const tile = map[ny][nx];
-            if (tile > 200 && tile <= 280 && tile !== 224) {
-                // 这些是怪物
-                if (enemyMap[tile]) enemy.add(enemyMap[tile]);
-            }
-        }
-    }
-    const attrs = [...enemy].map(v => (v.atk + v.def) * v.hp);
-    const maxAttr = Math.max(...attrs);
-    const minAttr = Math.min(...attrs);
-    const delta = maxAttr - minAttr;
-    for (let ny = 0; ny < height; ny++) {
-        for (let nx = 0; nx < width; nx++) {
-            const tile = map[ny][nx];
-            if (tile > 200 && tile <= 280 && tile !== 224) {
-                // 这些是怪物
-                if (enemyMap[tile]) {
-                    // 替换为弱怪/中怪/强怪
-                    const enemy = enemyMap[tile];
-                    const attr = (enemy.atk + enemy.def) * enemy.hp;
-                    const ad = attr - minAttr;
-                    if (ad < delta / 3) {
-                        map[ny][nx] = 201;
-                    } else if (ad < (delta * 2) / 3) {
-                        map[ny][nx] = 202;
-                    } else {
-                        map[ny][nx] = 203;
-                    }
-                }
-            }
-        }
-    }
-
-    return map;
-}
-
 export function convertFloor(
     map: number[][],
     clip: [number, number, number, number],
-    name: string,
-    floorId: string
+    config: GinkaConfig,
+    enemyMap: Record<number, Enemy>
 ) {
-    return convert(map, clip, name, floorId, numMap);
-}
-
-export function convertApeiriaMap(
-    map: number[][],
-    clip: [number, number, number, number],
-    name: string,
-    floorId: string,
-    enemyMap: Record<number, ApeiriaEnemy>
-) {
-    return convert(
-        convertApeiriaEnemy(map, enemyMap),
-        clip,
-        name,
-        floorId,
-        apeiriaMap
-    );
+    return convert(map, clip, config, enemyMap);
 }

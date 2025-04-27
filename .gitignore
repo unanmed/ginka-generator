@@ -7,3 +7,5 @@ minamo-dataset.json
 minamo-eval.json
 datasets
 *.log
+app/model/*
+!app/model/.gitkeep

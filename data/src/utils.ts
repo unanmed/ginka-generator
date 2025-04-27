@@ -1,7 +1,7 @@
 import { readFile } from 'fs-extra';
 import { join } from 'path';
-import { BaseConfig, TowerInfo } from './types';
-import { convertApeiriaMap, convertFloor } from './floor';
+import { BaseConfig, GinkaConfig, TowerInfo } from './types';
+import { convertFloor } from './floor';
 
 export interface DatasetMergable<T> {
     datasetId: number;
@@ -118,17 +118,13 @@ export async function getAllFloors(...info: TowerInfo[]) {
                     // 裁剪地图
                     const { clip } = tower.config;
                     const area = clip.special[id] ?? clip.defaults;
-                    if (tower.name === 'Apeiria') {
-                        return convertApeiriaMap(
-                            map,
-                            area,
-                            tower.name,
-                            id,
-                            enemyNumMap
-                        );
-                    } else {
-                        return convertFloor(map, area, tower.name, id);
-                    }
+
+                    return convertFloor(
+                        map,
+                        area,
+                        tower.config as GinkaConfig,
+                        enemyNumMap
+                    );
                 })
             );
         })

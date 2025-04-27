@@ -14,6 +14,16 @@ export interface TowerInfo {
 
 export interface GinkaConfig extends BaseConfig {
     data: Record<string, string[]>;
+    mapping: {
+        redGem: number[];
+        blueGem: number[];
+        greenGem: number[];
+        item: number[];
+        potion: number[];
+        key: number[];
+        door: number[];
+        wall: number[];
+    };
 }
 
 export interface GinkaTrainData {
