@@ -20,7 +20,7 @@ class GinkaModel(nn.Module):
         
     def forward(self, x, stage, random=False):
         if random:
-            x_in = F.softmax(self.head(x))
+            x_in = F.softmax(self.head(x), dim=1)
         else:
             x_in = x
         x = self.input(x_in)
@@ -30,7 +30,7 @@ class GinkaModel(nn.Module):
     
 # 检查显存占用
 if __name__ == "__main__":
-    input = torch.randn((1, 32, 13, 13)).cuda()
+    input = torch.randn((1, 32, 32, 32)).cuda()
     
     # 初始化模型
     model = GinkaModel().cuda()
@@ -38,7 +38,7 @@ if __name__ == "__main__":
     print_memory("初始化后")
     
     # 前向传播
-    output = model(input, 1)
+    output, _ = model(input, 1, True)
     
     print_memory("前向传播后")
     

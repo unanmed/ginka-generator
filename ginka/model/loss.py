@@ -325,7 +325,7 @@ def js_divergence(p, q, eps=1e-6, softmax=False):
     kl_pm = F.kl_div(log_p, log_m, reduction='batchmean', log_target=True)  # KL(p || m)
     kl_qm = F.kl_div(log_q, log_m, reduction='batchmean', log_target=True)  # KL(q || m)
 
-    return torch.clamp(0.5 * (kl_pm + kl_qm), max=10)
+    return torch.log1p(0.5 * (kl_pm + kl_qm))
 
 def immutable_penalty_loss(
     pred: torch.Tensor, input: torch.Tensor, modifiable_classes: list[int]
@@ -334,8 +334,8 @@ def immutable_penalty_loss(
     惩罚模型修改不可更改区域的损失。
     
     Args:
-        input: 模型输出 [B, C, H, W]，概率分布 (softmax 后)
-        target: 原始输入图 [B, C, H, W]，概率分布 (softmax 后)
+        input: 模型输出 [B, C, H, W]，概率分布 (softmax 前)
+        target: 原始输入图 [B, C, H, W]，概率分布 (softmax 前)
         modifiable_classes: 允许被修改的类别列表
     """
     not_allowed = get_not_allowed(modifiable_classes, include_illegal=True)
@@ -344,13 +344,10 @@ def immutable_penalty_loss(
         target_mask = torch.argmax(input[:, not_allowed, :, :], dim=1)
         target_mask = F.one_hot(target_mask, num_classes=len(not_allowed)).permute(0, 3, 1, 2).float()
 
-    target_mask = torch.log(target_mask + 1e-6)  # 转换为 log 概率分布
-    input_mask = torch.log(input_mask + 1e-6)  # 转换为 log 概率分布
-
     # 差异区域（模型试图改变的地方）
-    penalty = F.kl_div(input_mask, target_mask, reduction='batchmean', log_target=True)
+    penalty = F.cross_entropy(input_mask, target_mask)
 
-    return torch.clamp(penalty, max=1)
+    return penalty
 
 class WGANGinkaLoss:
     def __init__(self, lambda_gp=100, weight=[1, 0.5, 10, 0.2, 0.2, 0.2]):
@@ -420,7 +417,7 @@ class WGANGinkaLoss:
         fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
         ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio) # 蒙版越大，交叉熵损失权重越小
-        immutable_loss = immutable_penalty_loss(probs_fake, F.softmax(input, dim=1), STAGE_ALLOWED[stage])
+        immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
         fake_a, fake_b = fake.chunk(2, dim=0)
@@ -471,7 +468,7 @@ class WGANGinkaLoss:
         
         fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
-        immutable_loss = immutable_penalty_loss(probs_fake, F.softmax(input, dim=1), STAGE_ALLOWED[stage])
+        immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
         constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
         
         fake_a, fake_b = fake.chunk(2, dim=0)
@@ -496,7 +493,7 @@ class WGANGinkaLoss:
         losses = [
             input_head_illegal_loss(probs),
             input_head_wall_loss(probs),
-            -js_divergence(probs_a, probs_b, softmax=False) * 0.2
+            -js_divergence(probs_a, probs_b, softmax=False) * 0.3
         ]
         
         return sum(losses)

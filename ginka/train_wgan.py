@@ -49,12 +49,12 @@ def gen_curriculum(gen, masked1, masked2, masked3, detach=False) -> tuple[torch.
 def gen_total(gen, input, progress_detach=True, result_detach=False, random=False) -> torch.Tensor:
     if progress_detach:
         fake1, x_in = gen(input.detach(), 1, random)
-        fake2, _ = gen(F.softmax(fake1.detach()), 2)
-        fake3, _ = gen(F.softmax(fake2.detach()), 3)
+        fake2, _ = gen(F.softmax(fake1.detach(), dim=1), 2)
+        fake3, _ = gen(F.softmax(fake2.detach(), dim=1), 3)
     else:
         fake1, x_in = gen(input, 1, random)
-        fake2, _ = gen(F.softmax(fake1), 2)
-        fake3, _ = gen(F.softmax(fake2), 3)
+        fake2, _ = gen(F.softmax(fake1, dim=1), 2)
+        fake3, _ = gen(F.softmax(fake2, dim=1), 3)
     if result_detach:
         return fake1.detach(), fake2.detach(), fake3.detach(), x_in.detach()
     else:
@@ -69,7 +69,6 @@ def train():
     g_steps = 1
     # 训练阶段
     train_stage = 1
-    last_stage = False
     mask_ratio = 0.2 # 蒙版区域大小，每次增加 0.1，到达 0.9 之后进入阶段 2 的训练
     stage_epoch = 0 # 记录当前阶段的 epoch 数，用于控制训练过程
     
@@ -83,7 +82,6 @@ def train():
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE, shuffle=True)
     
     optimizer_ginka = optim.Adam(ginka.parameters(), lr=1e-4, betas=(0.0, 0.9))
-    optimizer_head = optim.Adam(ginka_head.parameters(), lr=1e-4, betas=(0.0, 0.9))
     optimizer_minamo = optim.Adam(minamo.parameters(), lr=1e-5, betas=(0.0, 0.9))
     
     # scheduler_ginka = optim.lr_scheduler.CosineAnnealingLR(optimizer_ginka, T_max=args.epochs)
@@ -117,9 +115,6 @@ def train():
         if data_ginka.get("stage") is not None:
             train_stage = data_ginka["stage"]
             
-        if data_ginka.get("last_stage") is not None:
-            last_stage = data_ginka["last_stage"]
-            
         if args.load_optim:
             if data_ginka.get("optim_state") is not None:
                 optimizer_ginka.load_state_dict(data_ginka["optim_state"])
@@ -149,22 +144,11 @@ def train():
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             real1, masked1, real2, masked2, real3, masked3 = [item.to(device) for item in batch]
             
-            if train_stage == 4:
-                # 最后一个阶段训练输入头
-                count = 5 if stage_epoch <= 20 else 2
-                for _ in range(count):
-                    optimizer_head.zero_grad()
-                    output = F.softmax(ginka_head(masked1), dim=1)
-                    loss_head = criterion.generator_input_head_loss(output)
-                    loss_head.backward()
-                    optimizer_head.step()
-            
             # ---------- 训练判别器
             for _ in range(c_steps):
                 # 生成假样本
                 optimizer_minamo.zero_grad()
                 optimizer_ginka.zero_grad()
-                optimizer_head.zero_grad()
                 
                 with torch.no_grad():
                     if train_stage == 1 or train_stage == 2:
@@ -193,7 +177,6 @@ def train():
             for _ in range(g_steps):
                 optimizer_minamo.zero_grad()
                 optimizer_ginka.zero_grad()
-                optimizer_head.zero_grad()
                 if train_stage == 1 or train_stage == 2:
                     fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, False)
                     
@@ -210,10 +193,10 @@ def train():
                     loss_ce_total += loss_ce.detach()
                     
                 elif train_stage == 3 or train_stage == 4:
-                    fake1, fake2, fake3, x_in = gen_total(ginka, input, True, False)
+                    fake1, fake2, fake3, x_in = gen_total(ginka, masked1, True, False, train_stage == 4)
                     
                     if train_stage == 3:
-                        loss_g1 = criterion.generator_loss_total_with_input(minamo, 1, fake1, input)
+                        loss_g1 = criterion.generator_loss_total_with_input(minamo, 1, fake1, masked1)
                     else:
                         loss_g1 = criterion.generator_loss_total(minamo, 1, fake1)
                     loss_g2 = criterion.generator_loss_total_with_input(minamo, 2, fake2, fake1)
@@ -221,7 +204,7 @@ def train():
                     
                     if train_stage == 4:
                         loss_head = criterion.generator_input_head_loss(x_in)
-                        loss_head.backward()
+                        loss_head.backward(retain_graph=True)
                     
                     loss_g = (loss_g1 + loss_g2 + loss_g3) / 3.0
                     loss_g.backward()
@@ -239,40 +222,26 @@ def train():
             f"CE: {avg_loss_ce:.6f} | M: {mask_ratio:.1f}"
         )
         
-        if avg_loss_ce < 1.0:
+        if avg_loss_ce < 0.5:
             low_loss_epochs += 1
         else:
             low_loss_epochs = 0
         
         # 训练流程控制
         
-        if low_loss_epochs >= 3 and train_stage == 1 and stage_epoch >= args.curr_epoch:
+        if train_stage >= 2:
+            train_stage += 1
+            
+            if train_stage == 5:
+                train_stage = 2
+        
+        if low_loss_epochs >= 5 and train_stage == 1 and stage_epoch >= args.curr_epoch:
             if mask_ratio >= 0.9:
                 train_stage = 2
             mask_ratio += 0.2
             mask_ratio = min(mask_ratio, 0.9)
             low_loss_epochs = 0
             stage_epoch = 0
-            
-        if (train_stage == 3 or train_stage == 2) and not last_stage:
-            if stage_epoch >= 25:
-                train_stage += 1
-                stage_epoch = 0
-                
-            if train_stage == 4:
-                last_stage = True
-                
-        if train_stage >= 3 or last_stage:
-            # 第三阶段后交叉熵损失不再应该生效
-            mask_ratio = 1.0
-            
-        if last_stage:
-            mask_ratio = 1.0
-            if train_stage == 2 and stage_epoch % 5 == 0:
-                train_stage = 4
-            
-            if train_stage == 4 and stage_epoch % 5 == 1:
-                train_stage = 2
         
         stage_epoch += 1
             
@@ -305,7 +274,6 @@ def train():
                 "stage": train_stage,
                 "mask_ratio": mask_ratio,
                 "stage_epoch": stage_epoch,
-                "last_stage": last_stage
             }, f"result/wgan/ginka-{epoch + 1}.pth")
             torch.save({
                 "model_state": minamo.state_dict(),
