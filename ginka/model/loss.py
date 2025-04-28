@@ -32,7 +32,7 @@ def get_not_allowed(classes: list[int], include_illegal=False):
             
     return res
 
-def outer_border_constraint_loss(pred: torch.Tensor, allowed_classes=[1, 11]):
+def outer_border_constraint_loss(pred: torch.Tensor, allowed_classes=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13]):
     """
     强制地图最外圈像素必须为指定类别（墙或箭头）
     
@@ -418,7 +418,7 @@ class WGANGinkaLoss:
         minamo_loss = -torch.mean(fake_scores)
         ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio) # 蒙版越大，交叉熵损失权重越小
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
-        constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
+        constraint_loss = inner_constraint_loss(probs_fake)
         
         fake_a, fake_b = fake.chunk(2, dim=0)
         
@@ -445,7 +445,7 @@ class WGANGinkaLoss:
         
         fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
-        constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
+        constraint_loss = inner_constraint_loss(probs_fake)
         
         fake_a, fake_b = fake.chunk(2, dim=0)
         
@@ -469,7 +469,7 @@ class WGANGinkaLoss:
         fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
         minamo_loss = -torch.mean(fake_scores)
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
-        constraint_loss = outer_border_constraint_loss(probs_fake) + inner_constraint_loss(probs_fake)
+        constraint_loss = inner_constraint_loss(probs_fake)
         
         fake_a, fake_b = fake.chunk(2, dim=0)
         

@@ -18,6 +18,7 @@ export interface GinkaConfig extends BaseConfig {
         redGem: number[];
         blueGem: number[];
         greenGem: number[];
+        yellowGem: number[];
         item: number[];
         potion: number[];
         key: number[];

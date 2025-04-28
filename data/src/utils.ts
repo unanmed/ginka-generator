@@ -109,22 +109,30 @@ export async function getAllFloors(...info: TowerInfo[]) {
                         join(tower.path, 'floors', `${id}.js`),
                         'utf-8'
                     );
-                    const data = JSON.parse(
-                        floorFile
-                            .replaceAll("'", '"')
-                            .slice(floorFile.indexOf('=') + 1)
-                    );
-                    const map = data.map as number[][];
-                    // 裁剪地图
-                    const { clip } = tower.config;
-                    const area = clip.special[id] ?? clip.defaults;
+                    try {
+                        const data = JSON.parse(
+                            floorFile
+                                // .replaceAll("'", '"')
+                                .slice(floorFile.indexOf('=') + 1)
+                        );
 
-                    return convertFloor(
-                        map,
-                        area,
-                        tower.config as GinkaConfig,
-                        enemyNumMap
-                    );
+                        const map = data.map as number[][];
+                        // 裁剪地图
+                        const { clip } = tower.config;
+                        const area = clip.special[id] ?? clip.defaults;
+
+                        return convertFloor(
+                            map,
+                            area,
+                            tower.config as GinkaConfig,
+                            enemyNumMap
+                        );
+                    } catch (e) {
+                        console.log(
+                            `Error when processing '${tower.name}' '${id}'`
+                        );
+                        throw e;
+                    }
                 })
             );
         })

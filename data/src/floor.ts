@@ -22,6 +22,7 @@ const numMap: Record<number, number> = {
 };
 
 export interface Enemy {
+    num: number;
     hp: number;
     atk: number;
     def: number;
@@ -44,41 +45,7 @@ function convert(
         clipped.push(row);
     }
 
-    // 2. 转换怪物
-    const enemySet = new Set<Enemy>();
-    for (let nx = 0; nx < w; nx++) {
-        for (let ny = 0; ny < h; ny++) {
-            const tile = clipped[ny][nx];
-            if (tile === 201 || tile === 202 || tile === 203) continue;
-            const enemy = enemyMap[tile];
-            if (!enemy) continue;
-            enemySet.add(enemy);
-        }
-    }
-    const attrs = [...enemySet].map(v => (v.atk + v.def) * v.hp);
-    const maxAttr = Math.max(...attrs);
-    const minAttr = Math.min(...attrs);
-    const delta = maxAttr - minAttr;
-    for (let ny = 0; ny < w; ny++) {
-        for (let nx = 0; nx < h; nx++) {
-            const tile = clipped[ny][nx];
-            if (tile === 201 || tile === 202 || tile === 203) continue;
-            const enemy = enemyMap[tile];
-            if (!enemy) continue;
-            // 替换为弱怪/中怪/强怪
-            const attr = (enemy.atk + enemy.def) * enemy.hp;
-            const ad = attr - minAttr;
-            if (ad < delta / 3) {
-                clipped[ny][nx] = 7;
-            } else if (ad < (delta * 2) / 3) {
-                clipped[ny][nx] = 8;
-            } else {
-                clipped[ny][nx] = 9;
-            }
-        }
-    }
-
-    // 3. 转换一般图块
+    // 2. 转换一般图块
     const mapping: Record<number, number> = {};
     config.mapping.wall.forEach(v => (mapping[v] = 1));
     config.mapping.key.forEach(v => (mapping[v] = 2));
@@ -88,12 +55,69 @@ function convert(
     config.mapping.door.forEach(v => (mapping[v] = 6));
     config.mapping.item.forEach(v => (mapping[v] = 12));
     config.mapping.greenGem.forEach(v => (mapping[v] = 13));
+    const yellowGem = new Set(config.mapping.yellowGem);
     for (let nx = 0; nx < w; nx++) {
         for (let ny = 0; ny < h; ny++) {
             const tile = clipped[ny][nx];
+            const enemy = enemyMap[tile];
+            if (yellowGem.has(tile)) {
+                const rand = Math.random();
+                if (rand < 2 / 5) {
+                    clipped[ny][nx] = 3;
+                } else if (rand < 4 / 5) {
+                    clipped[ny][nx] = 4;
+                } else {
+                    clipped[ny][nx] = 13;
+                }
+                continue;
+            }
             if (mapping[tile]) clipped[ny][nx] = mapping[tile];
             else if (numMap[tile]) clipped[ny][nx] = numMap[tile];
-            else clipped[ny][nx] = 0;
+            else if (!enemy) clipped[ny][nx] = 0;
+        }
+    }
+
+    // 3. 转换怪物
+    const enemySet = new Set<Enemy>();
+    for (let nx = 0; nx < w; nx++) {
+        for (let ny = 0; ny < h; ny++) {
+            const tile = clipped[ny][nx];
+            const enemy = enemyMap[tile];
+            if (!enemy) continue;
+            enemySet.add({ ...enemy, num: tile });
+        }
+    }
+    const enemyArr = [...enemySet];
+    enemyArr.sort((a, b) => a.num - b.num);
+    if (
+        enemyArr.length === 3 &&
+        enemyArr[0].num === 201 &&
+        enemyArr[1].num === 202 &&
+        enemyArr[2].num === 203
+    ) {
+        // pass
+    } else {
+        const attrs = [...enemySet].map(v => (v.atk + v.def) * v.hp);
+        const maxAttr = Math.max(...attrs);
+        const minAttr = Math.min(...attrs);
+        const delta = maxAttr - minAttr;
+        for (let ny = 0; ny < w; ny++) {
+            for (let nx = 0; nx < h; nx++) {
+                const tile = clipped[ny][nx];
+                if (tile < 32) continue;
+                const enemy = enemyMap[tile];
+                if (!enemy) continue;
+                // 替换为弱怪/中怪/强怪
+                const attr = (enemy.atk + enemy.def) * enemy.hp;
+                const ad = attr - minAttr;
+                if (ad < delta / 3) {
+                    clipped[ny][nx] = 7;
+                } else if (ad < (delta * 2) / 3) {
+                    clipped[ny][nx] = 8;
+                } else {
+                    clipped[ny][nx] = 9;
+                }
+            }
         }
     }
 

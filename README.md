@@ -27,11 +27,12 @@ GINKA Model 内部集成了 Minamo Model 用做判别器，与 Ginka Model 对�
         "redGem": [27],
         "blueGem": [28],
         "greenGem": [29],
-        "item": [47, 49, 50, 53],
+        "yellowGem": [30],
+        "item": [47, 49, 50, 51, 52, 53],
         "potion": [31, 32, 33, 34],
         "key": [21, 22, 23],
         "door": [81, 82, 83, 85],
-        "wall": [1]
+        "wall": [1, 17]
     },
     "data": {}
 }
