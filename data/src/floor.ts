@@ -1,24 +1,15 @@
 import { GinkaConfig } from './types';
 
 const numMap: Record<number, number> = {
-    0: 0, // 空地
-    1: 1, // 墙壁
-    21: 2, // 钥匙
-    27: 3, // 红宝石
-    28: 4, // 蓝宝石
-    31: 5, // 血瓶
-    81: 6, // 门
-    201: 7, // 弱怪
-    202: 8, // 中怪
-    203: 9, // 强怪
-    87: 10, // 楼梯
-    88: 10, // 楼梯
-    91: 11, // 箭头
-    92: 11, // 箭头
-    93: 11, // 箭头
-    94: 11, // 箭头
-    53: 12, // 道具
-    29: 13 // 绿宝石
+    0: 0,
+    1: 1,
+    2: 2,
+    91: 29,
+    92: 29,
+    93: 29,
+    94: 29,
+    87: 28,
+    88: 28
 };
 
 export interface Enemy {
@@ -45,39 +36,158 @@ function convert(
         clipped.push(row);
     }
 
-    // 2. 转换一般图块
-    const mapping: Record<number, number> = {};
-    config.mapping.wall.forEach(v => (mapping[v] = 1));
-    config.mapping.key.forEach(v => (mapping[v] = 2));
-    config.mapping.redGem.forEach(v => (mapping[v] = 3));
-    config.mapping.blueGem.forEach(v => (mapping[v] = 4));
-    config.mapping.potion.forEach(v => (mapping[v] = 5));
-    config.mapping.door.forEach(v => (mapping[v] = 6));
-    config.mapping.item.forEach(v => (mapping[v] = 12));
-    config.mapping.greenGem.forEach(v => (mapping[v] = 13));
-    const yellowGem = new Set(config.mapping.yellowGem);
+    const res: number[][] = Array.from({ length: clipped.length }, () =>
+        Array.from({ length: clipped[0].length })
+    );
+
+    // 2. 初步映射
     for (let nx = 0; nx < w; nx++) {
         for (let ny = 0; ny < h; ny++) {
             const tile = clipped[ny][nx];
-            const enemy = enemyMap[tile];
-            if (yellowGem.has(tile)) {
-                const rand = Math.random();
-                if (rand < 2 / 5) {
-                    clipped[ny][nx] = 3;
-                } else if (rand < 4 / 5) {
-                    clipped[ny][nx] = 4;
-                } else {
-                    clipped[ny][nx] = 13;
-                }
-                continue;
+            if (numMap[tile] !== void 0) {
+                res[ny][nx] = numMap[tile];
             }
-            if (mapping[tile]) clipped[ny][nx] = mapping[tile];
-            else if (numMap[tile]) clipped[ny][nx] = numMap[tile];
-            else if (!enemy) clipped[ny][nx] = 0;
         }
     }
 
-    // 3. 转换怪物
+    // 3. 转换一般图块
+    const mapping: Record<number, number> = {};
+    const dict = config.mapping;
+    dict.wall.forEach(v => (mapping[v] = 1));
+    dict.decoration.forEach(v => (mapping[v] = 2));
+    dict.floor.forEach(v => (mapping[v] = 28));
+    dict.arrow.forEach(v => (mapping[v] = 29));
+    for (let nx = 0; nx < w; nx++) {
+        for (let ny = 0; ny < h; ny++) {
+            const tile = clipped[ny][nx];
+            if (mapping[tile] !== void 0) res[ny][nx] = mapping[tile];
+        }
+    }
+
+    // 4. 转换含等级图块
+    const redGemSet = new Set<number>();
+    const blueGemSet = new Set<number>();
+    const greenGemSet = new Set<number>();
+    const potionSet = new Set<number>();
+    for (let nx = 0; nx < w; nx++) {
+        for (let ny = 0; ny < h; ny++) {
+            const tile = clipped[ny][nx];
+            if (dict.redGem[tile] !== void 0) {
+                redGemSet.add(dict.redGem[tile]);
+            } else if (dict.blueGem[tile] !== void 0) {
+                blueGemSet.add(dict.blueGem[tile]);
+            } else if (dict.greenGem[tile] !== void 0) {
+                greenGemSet.add(dict.greenGem[tile]);
+            } else if (dict.yellowGem[tile] !== void 0) {
+                redGemSet.add(dict.yellowGem[tile]);
+                blueGemSet.add(dict.yellowGem[tile]);
+                greenGemSet.add(dict.yellowGem[tile]);
+            } else if (dict.potion[tile] !== void 0) {
+                potionSet.add(dict.potion[tile]);
+            }
+        }
+    }
+    const minRedGem = Math.min(...redGemSet);
+    const maxRedGem = Math.max(...redGemSet);
+    const minBlueGem = Math.min(...blueGemSet);
+    const maxBlueGem = Math.max(...blueGemSet);
+    const minGreenGem = Math.min(...greenGemSet);
+    const maxGreenGem = Math.max(...greenGemSet);
+    const minPotion = Math.min(...potionSet);
+    const maxPotion = Math.max(...potionSet);
+
+    for (let nx = 0; nx < w; nx++) {
+        for (let ny = 0; ny < h; ny++) {
+            const tile = clipped[ny][nx];
+            if (dict.redGem[tile] !== void 0) {
+                const value = dict.redGem[tile];
+                if (maxRedGem === minRedGem) {
+                    res[ny][nx] = 10;
+                } else {
+                    const level = Math.floor(
+                        ((value - minRedGem) / (maxRedGem - minRedGem)) * 3
+                    );
+                    res[ny][nx] = 10 + level;
+                }
+            } else if (dict.blueGem[tile] !== void 0) {
+                const value = dict.blueGem[tile];
+                if (maxBlueGem === minBlueGem) {
+                    res[ny][nx] = 13;
+                } else {
+                    const level = Math.floor(
+                        ((value - minBlueGem) / (maxBlueGem - minBlueGem)) * 3
+                    );
+                    res[ny][nx] = 13 + level;
+                }
+            } else if (dict.greenGem[tile] !== void 0) {
+                const value = dict.greenGem[tile];
+                if (maxGreenGem === minGreenGem) {
+                    res[ny][nx] = 16;
+                } else {
+                    const level = Math.floor(
+                        ((value - minGreenGem) / (maxGreenGem - minGreenGem)) *
+                            3
+                    );
+                    res[ny][nx] = 16 + level;
+                }
+            } else if (dict.yellowGem[tile] !== void 0) {
+                const rand = Math.random();
+                const value = dict.yellowGem[tile];
+                if (rand < 2 / 5) {
+                    if (maxRedGem === minRedGem) {
+                        res[ny][nx] = 10;
+                    } else {
+                        const level = Math.floor(
+                            ((value - minRedGem) / (maxRedGem - minRedGem)) * 3
+                        );
+                        res[ny][nx] = 10 + level;
+                    }
+                } else if (rand < 4 / 5) {
+                    if (maxBlueGem === minBlueGem) {
+                        res[ny][nx] = 13;
+                    } else {
+                        const level = Math.floor(
+                            ((value - minBlueGem) / (maxBlueGem - minBlueGem)) *
+                                3
+                        );
+                        res[ny][nx] = 13 + level;
+                    }
+                } else {
+                    if (maxGreenGem === minGreenGem) {
+                        res[ny][nx] = 16;
+                    } else {
+                        const level = Math.floor(
+                            ((value - minGreenGem) /
+                                (maxGreenGem - minGreenGem)) *
+                                3
+                        );
+                        res[ny][nx] = 16 + level;
+                    }
+                }
+            } else if (dict.potion[tile] !== void 0) {
+                const value = dict.potion[tile];
+                if (maxGreenGem === minGreenGem) {
+                    res[ny][nx] = 19;
+                } else {
+                    const level = Math.floor(
+                        ((value - minPotion) / (maxPotion - minPotion)) * 3
+                    );
+                    res[ny][nx] = 19 + level;
+                }
+            } else if (dict.door[tile] !== void 0) {
+                const level = dict.door[tile];
+                res[ny][nx] = 3 + level;
+            } else if (dict.key[tile] !== void 0) {
+                const level = dict.key[tile];
+                res[ny][nx] = 7 + level;
+            } else if (dict.item[tile] !== void 0) {
+                const level = dict.item[tile];
+                res[ny][nx] = 22 + level;
+            }
+        }
+    }
+
+    // 5. 转换怪物
     const enemySet = new Set<Enemy>();
     for (let nx = 0; nx < w; nx++) {
         for (let ny = 0; ny < h; ny++) {
@@ -89,39 +199,30 @@ function convert(
     }
     const enemyArr = [...enemySet];
     enemyArr.sort((a, b) => a.num - b.num);
-    if (
-        enemyArr.length === 3 &&
-        enemyArr[0].num === 201 &&
-        enemyArr[1].num === 202 &&
-        enemyArr[2].num === 203
-    ) {
-        // pass
-    } else {
-        const attrs = [...enemySet].map(v => (v.atk + v.def) * v.hp);
-        const maxAttr = Math.max(...attrs);
-        const minAttr = Math.min(...attrs);
-        const delta = maxAttr - minAttr;
-        for (let ny = 0; ny < w; ny++) {
-            for (let nx = 0; nx < h; nx++) {
-                const tile = clipped[ny][nx];
-                if (tile < 32) continue;
-                const enemy = enemyMap[tile];
-                if (!enemy) continue;
-                // 替换为弱怪/中怪/强怪
-                const attr = (enemy.atk + enemy.def) * enemy.hp;
-                const ad = attr - minAttr;
-                if (ad < delta / 3) {
-                    clipped[ny][nx] = 7;
-                } else if (ad < (delta * 2) / 3) {
-                    clipped[ny][nx] = 8;
-                } else {
-                    clipped[ny][nx] = 9;
-                }
+
+    const attrs = [...enemySet].map(v => (v.atk + v.def) * v.hp);
+    const maxAttr = Math.max(...attrs);
+    const minAttr = Math.min(...attrs);
+    const delta = maxAttr - minAttr;
+    for (let ny = 0; ny < w; ny++) {
+        for (let nx = 0; nx < h; nx++) {
+            const tile = clipped[ny][nx];
+            const enemy = enemyMap[tile];
+            if (!enemy) continue;
+            // 替换为弱怪/中怪/强怪
+            const attr = (enemy.atk + enemy.def) * enemy.hp;
+            const ad = attr - minAttr;
+            if (ad < delta / 3 || delta === 0) {
+                res[ny][nx] = 25;
+            } else if (ad < (delta * 2) / 3) {
+                res[ny][nx] = 26;
+            } else {
+                res[ny][nx] = 27;
             }
         }
     }
 
-    return clipped;
+    return res;
 }
 
 export function convertFloor(

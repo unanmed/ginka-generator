@@ -11,11 +11,15 @@ export function parseGinka(data: Map<string, FloorData>) {
 
     data.forEach((floor, key) => {
         const config = floor.config as GinkaConfig;
-        const text = config.data[floor.id] ?? [];
+        const data = config.data[floor.id] ?? {
+            tag: Array(64).fill(0),
+            val: Array(16).fill(0)
+        };
         resolved[key] = {
             map: floor.map,
             size: [floor.map[0].length, floor.map.length],
-            text: text
+            tag: data.tag,
+            val: data.val
         };
         i++;
         progress.update(i);
