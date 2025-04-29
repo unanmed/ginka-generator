@@ -4,11 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.data import Data
-from minamo.model.model import MinamoModel
 from shared.graph import batch_convert_soft_map_to_graph
 from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
-from shared.similarity.topo import overall_similarity, build_topological_graph
-from shared.similarity.vision import calculate_visual_similarity
+from ..critic.model import MinamoModel
 
 CLASS_NUM = 32
 ILLEGAL_MAX_NUM = 13
@@ -355,7 +353,7 @@ class WGANGinkaLoss:
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
         
-    def compute_gradient_penalty(self, critic, stage, real_data, fake_data):
+    def compute_gradient_penalty(self, critic, stage, real_data, fake_data, tag_cond, val_cond):
         # 进行插值
         batch_size = real_data.size(0)
         epsilon_data = torch.randn(batch_size, 1, 1, 1, device=real_data.device)
@@ -366,7 +364,7 @@ class WGANGinkaLoss:
         interp_data.requires_grad_()
         interp_graph.x.requires_grad_()
         
-        _, d_vis_score, d_topo_score = critic(interp_data, interp_graph, stage)
+        _, d_vis_score, d_topo_score = critic(interp_data, interp_graph, stage, tag_cond, val_cond)
         
         # 计算梯度
         grad_vis = torch.autograd.grad(
@@ -392,29 +390,30 @@ class WGANGinkaLoss:
         return gp_loss
         
     def discriminator_loss(
-        self, critic, stage: int, real_data: torch.Tensor, fake_data: torch.Tensor
+        self, critic, stage: int, real_data: torch.Tensor, fake_data: torch.Tensor,
+        tag_cond: torch.Tensor, val_cond: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """ 判别器损失函数 """
         fake_data = F.softmax(fake_data, dim=1)
         real_graph = batch_convert_soft_map_to_graph(real_data)
         fake_graph = batch_convert_soft_map_to_graph(fake_data)
-        real_scores, _, _ = critic(real_data, real_graph, stage)
-        fake_scores, _, _ = critic(fake_data, fake_graph, stage)
+        real_scores, _, _ = critic(real_data, real_graph, stage, tag_cond, val_cond)
+        fake_scores, _, _ = critic(fake_data, fake_graph, stage, tag_cond, val_cond)
         
         # Wasserstein 距离
         d_loss = fake_scores.mean() - real_scores.mean()
-        grad_loss = self.compute_gradient_penalty(critic, stage, real_data, fake_data)
+        grad_loss = self.compute_gradient_penalty(critic, stage, real_data, fake_data, tag_cond, val_cond)
         
         total_loss = d_loss + self.lambda_gp * grad_loss
         
         return total_loss, d_loss
 
-    def generator_loss(self, critic, stage, mask_ratio, real, fake: torch.Tensor, input) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def generator_loss(self, critic, stage, mask_ratio, real, fake: torch.Tensor, input, tag_cond, val_cond) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """ 生成器损失函数 """
         probs_fake = F.softmax(fake, dim=1)
         fake_graph = batch_convert_soft_map_to_graph(probs_fake)
         
-        fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
+        fake_scores, _, _ = critic(probs_fake, fake_graph, stage, tag_cond, val_cond)
         minamo_loss = -torch.mean(fake_scores)
         ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio) # 蒙版越大，交叉熵损失权重越小
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
@@ -439,11 +438,11 @@ class WGANGinkaLoss:
         
         return sum(losses), minamo_loss, ce_loss, immutable_loss
     
-    def generator_loss_total(self, critic, stage, fake) -> torch.Tensor:
+    def generator_loss_total(self, critic, stage, fake, tag_cond, val_cond) -> torch.Tensor:
         probs_fake = F.softmax(fake, dim=1)
         fake_graph = batch_convert_soft_map_to_graph(probs_fake)
         
-        fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
+        fake_scores, _, _ = critic(probs_fake, fake_graph, stage, tag_cond, val_cond)
         minamo_loss = -torch.mean(fake_scores)
         constraint_loss = inner_constraint_loss(probs_fake)
         
@@ -462,11 +461,11 @@ class WGANGinkaLoss:
             
         return sum(losses)
     
-    def generator_loss_total_with_input(self, critic, stage, fake, input) -> torch.Tensor:
+    def generator_loss_total_with_input(self, critic, stage, fake, input, tag_cond, val_cond) -> torch.Tensor:
         probs_fake = F.softmax(fake, dim=1)
         fake_graph = batch_convert_soft_map_to_graph(probs_fake)
         
-        fake_scores, _, _ = critic(probs_fake, fake_graph, stage)
+        fake_scores, _, _ = critic(probs_fake, fake_graph, stage, tag_cond, val_cond)
         minamo_loss = -torch.mean(fake_scores)
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_ALLOWED[stage])
         constraint_loss = inner_constraint_loss(probs_fake)

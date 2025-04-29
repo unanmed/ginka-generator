@@ -8,12 +8,37 @@ import torch.nn.functional as F
 import cv2
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-from .model.model import GinkaModel
+from .generator.model import GinkaModel
 from .dataset import GinkaWGANDataset
-from .model.loss import WGANGinkaLoss
-from .model.input import RandomInputHead
-from minamo.model.model import MinamoScoreModule
+from .generator.loss import WGANGinkaLoss
+from .generator.input import RandomInputHead
+from .critic.model import MinamoModel
 from shared.image import matrix_to_image_cv
+
+# 标签定义：
+# 0. 蓝海, 1. 红海, 2: 室内, 3. 野外, 4. 左右对称, 5. 上下对称, 6. 伪对称, 7. 咸鱼层,
+# 8. 剧情层, 9. 水层, 10. 爽塔, 11. Boss层, 12. 纯Boss层, 13. 多房间, 14. 多走廊, 15. 道具塔
+
+# 标量值定义：
+# 0. 整体密度，非空白图块/地图面积，空白图块还包括装饰图块
+# 1. 怪物密度，怪物数量/地图面积
+# 2. 资源密度，资源数量/地图面积
+# 3. 门密度，门数量/地图面积
+# 4. 入口数量
+
+# 图块定义：
+# 0. 空地, 1. 墙壁, 2. 装饰（用于野外装饰，视为空地）, 
+# 3. 黄门, 4. 蓝门, 5. 红门, 6. 机关门, 其余种类的门如绿门都视为红门
+# 7-9. 黄蓝红门钥匙，机关门不使用钥匙开启
+# 10-12. 三种等级的红宝石
+# 13-15. 三种等级的蓝宝石
+# 16-18. 三种等级的绿宝石
+# 19-21. 三种等级的血瓶
+# 22-24. 三种等级的道具
+# 25-27. 三种等级的怪物
+# 28-29. 留空
+# 30. 楼梯入口
+# 31. 箭头入口
 
 BATCH_SIZE = 16
 
@@ -34,27 +59,28 @@ def parse_arguments():
     parser.add_argument("--checkpoint", type=int, default=5)
     parser.add_argument("--load_optim", type=bool, default=True)
     parser.add_argument("--curr_epoch", type=int, default=20) # 课程学习至少多少 epoch
+    parser.add_argument("--tuning", type=bool, default=False)
     args = parser.parse_args()
     return args
 
-def gen_curriculum(gen, masked1, masked2, masked3, detach=False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    fake1, _ = gen(masked1, 1)
-    fake2, _ = gen(masked2, 2)
-    fake3, _ = gen(masked3, 3)
+def gen_curriculum(gen, masked1, masked2, masked3, tag, val, detach=False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    fake1, _ = gen(masked1, 1, False, tag, val)
+    fake2, _ = gen(masked2, 2, False, tag, val)
+    fake3, _ = gen(masked3, 3, False, tag, val)
     if detach:
         return fake1.detach(), fake2.detach(), fake3.detach()
     else:
         return fake1, fake2, fake3
     
-def gen_total(gen, input, progress_detach=True, result_detach=False, random=False) -> torch.Tensor:
+def gen_total(gen, input, tag, val, progress_detach=True, result_detach=False, random=False) -> torch.Tensor:
     if progress_detach:
-        fake1, x_in = gen(input.detach(), 1, random)
-        fake2, _ = gen(F.softmax(fake1.detach(), dim=1), 2)
-        fake3, _ = gen(F.softmax(fake2.detach(), dim=1), 3)
+        fake1, x_in = gen(input.detach(), 1, random, tag, val)
+        fake2, _ = gen(F.softmax(fake1.detach(), dim=1), 2, False, tag, val)
+        fake3, _ = gen(F.softmax(fake2.detach(), dim=1), 3, False, tag, val)
     else:
-        fake1, x_in = gen(input, 1, random)
-        fake2, _ = gen(F.softmax(fake1, dim=1), 2)
-        fake3, _ = gen(F.softmax(fake2, dim=1), 3)
+        fake1, x_in = gen(input, 1, random, tag, val)
+        fake2, _ = gen(F.softmax(fake1, dim=1), 2, False, tag, val)
+        fake3, _ = gen(F.softmax(fake2, dim=1), 3, False, tag, val)
     if result_detach:
         return fake1.detach(), fake2.detach(), fake3.detach(), x_in.detach()
     else:
@@ -74,7 +100,7 @@ def train():
     
     ginka = GinkaModel().to(device)
     ginka_head = RandomInputHead().to(device)
-    minamo = MinamoScoreModule().to(device)
+    minamo = MinamoModel().to(device)
     
     dataset = GinkaWGANDataset(args.train, device)
     dataset_val = GinkaWGANDataset(args.validate, device)
@@ -133,6 +159,14 @@ def train():
             
         print("Train from loaded state.")
         
+    curr_epoch = args.curr_epoch
+        
+    if args.tuning:
+        train_stage = 1
+        curr_epoch = curr_epoch // 4
+        stage_epoch = 0
+        mask_ratio = 0.2
+        
     low_loss_epochs = 0
         
     for epoch in tqdm(range(args.epochs), desc="WGAN Training", disable=disable_tqdm):
@@ -142,7 +176,14 @@ def train():
         loss_ce_total = torch.Tensor([0]).to(device)
         
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
-            real1, masked1, real2, masked2, real3, masked3 = [item.to(device) for item in batch]
+            real1 = batch["real1"].to(device)
+            masked1 = batch["masked1"].to(device)
+            real2 = batch["real2"].to(device)
+            masked2 = batch["masked2"].to(device)
+            real3 = batch["real3"].to(device)
+            masked3 = batch["masked3"].to(device)
+            tag_cond = batch["tag_cond"].to(device)
+            val_cond = batch["val_cond"].to(device)
             
             # ---------- 训练判别器
             for _ in range(c_steps):
@@ -152,10 +193,10 @@ def train():
                 
                 with torch.no_grad():
                     if train_stage == 1 or train_stage == 2:
-                        fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, True)
+                        fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, tag_cond, val_cond, True)
                         
                     elif train_stage == 3 or train_stage == 4:
-                        fake1, fake2, fake3, _ = gen_total(ginka, masked1, True, True, train_stage == 4)
+                        fake1, fake2, fake3, _ = gen_total(ginka, masked1, tag_cond, val_cond, True, True, train_stage == 4)
                         
                 loss_d1, dis1 = criterion.discriminator_loss(minamo, 1, real1, fake1)
                 loss_d2, dis2 = criterion.discriminator_loss(minamo, 2, real2, fake2)
@@ -235,7 +276,7 @@ def train():
             if train_stage == 5:
                 train_stage = 2
         
-        if low_loss_epochs >= 5 and train_stage == 1 and stage_epoch >= args.curr_epoch:
+        if low_loss_epochs >= 5 and train_stage == 1 and stage_epoch >= curr_epoch:
             if mask_ratio >= 0.9:
                 train_stage = 2
             mask_ratio += 0.2
@@ -283,13 +324,21 @@ def train():
             idx = 0
             with torch.no_grad():
                 for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
-                    real1, masked1, real2, masked2, real3, masked3 = [item.to(device) for item in batch]
+                    real1 = batch["real1"].to(device)
+                    masked1 = batch["masked1"].to(device)
+                    real2 = batch["real2"].to(device)
+                    masked2 = batch["masked2"].to(device)
+                    real3 = batch["real3"].to(device)
+                    masked3 = batch["masked3"].to(device)
+                    tag_cond = batch["tag_cond"].to(device)
+                    val_cond = batch["val_cond"].to(device)
+                    
                     if train_stage == 1 or train_stage == 2:
-                        fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, True)
+                        fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, tag_cond, val_cond, True)
                             
                     elif train_stage == 3 or train_stage == 4:
                         input = masked1 if train_stage == 3 else F.softmax(ginka_head(masked1), dim=1)
-                        fake1, fake2, fake3, _ = gen_total(ginka, input, True, True)
+                        fake1, fake2, fake3, _ = gen_total(ginka, input, tag_cond, val_cond, True, True, train_stage == 4)
                         
                     fake1 = torch.argmax(fake1, dim=1).cpu().numpy()
                     fake2 = torch.argmax(fake2, dim=1).cpu().numpy()

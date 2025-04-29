@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from shared.attention import ChannelAttention
-from .common import GCNBlock, DoubleConvBlock
+from ..common.common import GCNBlock
+from ..common.cond import ConditionInjector
 
 class GinkaTransformerEncoder(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, token_size, ff_dim, num_heads=8, num_layers=6):
@@ -53,7 +54,7 @@ class ConvBlock(nn.Module):
 class FusionModule(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.conv = DoubleConvBlock([in_ch, out_ch, out_ch])
+        self.conv = nn.Conv2d(in_ch, out_ch, 3, padding=1, padding_mode='replicate')
         
     def forward(self, x1, x2):
         x = torch.cat([x1, x2], dim=1)
@@ -66,10 +67,12 @@ class GinkaEncoder(nn.Module):
         super().__init__()
         self.conv = ConvBlock(in_ch, out_ch)
         self.pool = nn.MaxPool2d(2)
+        self.inject = ConditionInjector(256, out_ch)
 
-    def forward(self, x):
+    def forward(self, x, cond):
         x = self.conv(x)
         x = self.pool(x)
+        x = self.inject(x, cond)
         return x
     
 class GinkaGCNFusedEncoder(nn.Module):
@@ -79,12 +82,14 @@ class GinkaGCNFusedEncoder(nn.Module):
         self.gcn = GCNBlock(out_ch, out_ch*2, out_ch, w, h)
         self.pool = nn.MaxPool2d(2)
         self.fusion = FusionModule(out_ch*2, out_ch)
+        self.inject = ConditionInjector(256, out_ch)
 
-    def forward(self, x):
+    def forward(self, x, cond):
         x = self.conv(x)
         x = self.pool(x)
         x2 = self.gcn(x)
         x = self.fusion(x, x2)
+        x = self.inject(x, cond)
         return x
     
 class GinkaUpSample(nn.Module):
@@ -105,11 +110,13 @@ class GinkaDecoder(nn.Module):
         super().__init__()
         self.upsample = GinkaUpSample(in_ch, in_ch // 2)
         self.conv = ConvBlock(in_ch, out_ch)
+        self.inject = ConditionInjector(256, out_ch)
         
-    def forward(self, x, feat):
+    def forward(self, x, feat, cond):
         x = self.upsample(x)
         x = torch.cat([x, feat], dim=1)
         x = self.conv(x)
+        x = self.inject(x, cond)
         return x
     
 class GinkaGCNFusedDecoder(nn.Module):
@@ -119,13 +126,15 @@ class GinkaGCNFusedDecoder(nn.Module):
         self.conv = ConvBlock(in_ch, out_ch)
         self.gcn = GCNBlock(out_ch, out_ch*2, out_ch, w, h)
         self.fusion = FusionModule(out_ch*2, out_ch)
+        self.inject = ConditionInjector(256, out_ch)
         
-    def forward(self, x, feat):
+    def forward(self, x, feat, cond):
         x = self.upsample(x)
         x = torch.cat([x, feat], dim=1)
         x = self.conv(x)
         x2 = self.gcn(x)
         x = self.fusion(x, x2)
+        x = self.inject(x, cond)
         return x
     
 class GinkaBottleneck(nn.Module):
@@ -136,9 +145,10 @@ class GinkaBottleneck(nn.Module):
             token_size=16, ff_dim=1024, num_layers=4
         )
         self.gcn = GCNBlock(module_ch, module_ch*2, module_ch, 4, 4)
-        self.fusion = FusionModule(module_ch*2, module_ch)
+        self.fusion = nn.Conv2d(module_ch*3, module_ch, 1)
+        self.inject = ConditionInjector(256, module_ch)
         
-    def forward(self, x):
+    def forward(self, x, cond):
         B = x.size(0)
         
         x1 = x.view(B, 512, 16).permute(0, 2, 1) # [B, 16, in_ch]
@@ -146,7 +156,9 @@ class GinkaBottleneck(nn.Module):
         x1 = x1.permute(0, 2, 1).view(B, 512, 4, 4) # [B, out_ch, 4, 4]
         x2 = self.gcn(x)
         
-        x = self.fusion(x1, x2)
+        x = torch.cat([x, x1, x2], dim=1)
+        x = self.fusion(x)
+        x = self.inject(x, cond)
         
         return x
 
@@ -162,7 +174,7 @@ class GinkaUNet(nn.Module):
         self.down1 = ConvBlock(in_ch, base_ch)
         self.down2 = GinkaGCNFusedEncoder(base_ch, base_ch*2, 16, 16)
         self.down3 = GinkaGCNFusedEncoder(base_ch*2, base_ch*4, 8, 8)
-        self.down4 = GinkaEncoder(base_ch*4, base_ch*8)
+        self.down4 = GinkaGCNFusedEncoder(base_ch*4, base_ch*8, 4, 4)
         self.bottleneck = GinkaBottleneck(base_ch*8, 4, 4)
         
         self.up1 = GinkaGCNFusedDecoder(base_ch*8, base_ch*4, 8, 8)
@@ -175,17 +187,17 @@ class GinkaUNet(nn.Module):
             nn.ELU(),
         )
         
-    def forward(self, x):
+    def forward(self, x, cond):
         x1 = self.down1(x) # [B, 64, 32, 32]
-        x2 = self.down2(x1) # [B, 128, 16, 16]
-        x3 = self.down3(x2) # [B, 256, 8, 8]
-        x4 = self.down4(x3) # [B, 512, 4, 4]
-        x4 = self.bottleneck(x4) # [B, 512, 4, 4]
+        x2 = self.down2(x1, cond) # [B, 128, 16, 16]
+        x3 = self.down3(x2, cond) # [B, 256, 8, 8]
+        x4 = self.down4(x3, cond) # [B, 512, 4, 4]
+        x4 = self.bottleneck(x4, cond) # [B, 512, 4, 4]
         
         # 上采样
-        x = self.up1(x4, x3) # [B, 256, 8, 8]
-        x = self.up2(x, x2) # [B, 128, 16, 16]
-        x = self.up3(x, x1) # [B, 64, 32, 32]
+        x = self.up1(x4, x3, cond) # [B, 256, 8, 8]
+        x = self.up2(x, x2, cond) # [B, 128, 16, 16]
+        x = self.up3(x, x1, cond) # [B, 64, 32, 32]
         x = self.final(x) # [B, 32, 32, 32]
         
         return x
