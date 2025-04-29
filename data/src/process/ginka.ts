@@ -1,4 +1,5 @@
 import { SingleBar, Presets } from 'cli-progress';
+import { getGinkaRatio } from 'src/floor';
 import { GinkaTrainData, GinkaConfig, GinkaDataset } from 'src/types';
 import { FloorData } from 'src/utils';
 
@@ -12,14 +13,13 @@ export function parseGinka(data: Map<string, FloorData>) {
     data.forEach((floor, key) => {
         const config = floor.config as GinkaConfig;
         const data = config.data[floor.id] ?? {
-            tag: Array(64).fill(0),
-            val: Array(16).fill(0)
+            tag: Array(64).fill(0)
         };
         resolved[key] = {
             map: floor.map,
             size: [floor.map[0].length, floor.map.length],
             tag: data.tag,
-            val: data.val
+            val: getGinkaRatio(floor.map)
         };
         i++;
         progress.update(i);

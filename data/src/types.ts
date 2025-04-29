@@ -14,7 +14,6 @@ export interface TowerInfo {
 
 export interface GinkaData {
     tag: number[];
-    val: number[];
 }
 
 export interface GinkaConfig extends BaseConfig {
