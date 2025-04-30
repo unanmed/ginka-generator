@@ -30,5 +30,7 @@ export function parseGinka(data: Map<string, FloorData>) {
         data: resolved
     };
 
+    progress.stop();
+
     return dataset;
 }

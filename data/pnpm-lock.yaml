@@ -14,6 +14,9 @@ importers:
       fs-extra:
         specifier: ^11.3.0
         version: 11.3.0
+      why-is-node-running:
+        specifier: ^3.2.2
+        version: 3.2.2
     devDependencies:
       '@types/cli-progress':
         specifier: ^3.11.6
@@ -577,6 +580,11 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
+  why-is-node-running@3.2.2:
+    resolution: {integrity: sha512-NKUzAelcoCXhXL4dJzKIwXeR8iEVqsA0Lq6Vnd0UXvgaKbzVo4ZTHROF2Jidrv+SgxOQ03fMinnNhzZATxOD3A==}
+    engines: {node: '>=20.11'}
+    hasBin: true
+
 snapshots:
 
   '@esbuild/aix-ppc64@0.25.1':
@@ -1020,3 +1028,5 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  why-is-node-running@3.2.2: {}
