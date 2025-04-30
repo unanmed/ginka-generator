@@ -26,15 +26,15 @@ def matrix_to_image_cv(map_matrix, tile_set, tile_size=32):
             if '0' in tile_set:
                 canvas[y:y+tile_size, x:x+tile_size] = tile_set['0'][:, :, :3]  # 仅填充 RGB
 
-            if tile_index == '11':
+            if tile_index == '30':
                 if row == 0:
-                    tile_index = '11_1'
+                    tile_index = '30_1'
                 elif row == W - 1:
-                    tile_index = '11_3'
+                    tile_index = '30_3'
                 elif col == 0:
-                    tile_index = '11_2'
+                    tile_index = '30_2'
                 elif col == H - 1:
-                    tile_index = '11_4'
+                    tile_index = '30_4'
 
             # 叠加其他透明图块
             if tile_index in tile_set and tile_index != 0:

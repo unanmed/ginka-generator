@@ -9,13 +9,13 @@ from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
 from ..critic.model import MinamoModel
 
 CLASS_NUM = 32
-ILLEGAL_MAX_NUM = 13
+ILLEGAL_MAX_NUM = 30
 
 STAGE_ALLOWED = [
     [],
-    [0, 1, 10, 11],
-    [6, 7, 8, 9],
-    [2, 3, 4, 5, 12, 13]
+    [0, 1, 2, 29, 30],
+    [3, 4, 5, 6, 26, 27, 28],
+    list(range(7, 26))
 ]
 
 def get_not_allowed(classes: list[int], include_illegal=False):
@@ -30,14 +30,13 @@ def get_not_allowed(classes: list[int], include_illegal=False):
             
     return res
 
-def outer_border_constraint_loss(pred: torch.Tensor, allowed_classes=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13]):
+def outer_border_constraint_loss(pred: torch.Tensor, allowed_classes=[*list(range(0, 29)), 30]):
     """
     强制地图最外圈像素必须为指定类别（墙或箭头）
     
     参数:
         pred: 模型输出的概率分布，形状 [B, C, H, W]
-        allowed_classes: 允许出现在外圈的类别列表（默认[1,11]）
-        penalty_scale: 惩罚强度系数
+        allowed_classes: 允许出现在外圈的类别列表
     
     返回:
         loss: 标量损失值
@@ -62,12 +61,12 @@ def outer_border_constraint_loss(pred: torch.Tensor, allowed_classes=[0, 1, 2, 3
     
     return loss_unallowed
 
-def inner_constraint_loss(pred: torch.Tensor, allowed=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13]):
+def inner_constraint_loss(pred: torch.Tensor, allowed=list(range(0, 30))):
     """限定内部允许出现的图块种类
 
     Args:
         pred (torch.Tensor): 模型输出的概率分布 [B, C, H, W]
-        unallowed (list, optional): 在地图中部（处最外圈）允许出现的图块种类. Defaults to [11].
+        allowed (list, optional): 在地图中部（除最外圈）允许出现的图块种类
     """
     B, C, H, W = pred.shape
     
@@ -100,7 +99,7 @@ def _create_distance_kernel(size):
 
 def entrance_constraint_loss(
     pred: torch.Tensor,
-    entrance_classes=[10, 11],  # 假设10是楼梯，11是箭头
+    entrance_classes=[29, 30],
     min_distance=9,
     presence_threshold=0.8,
     lambda_presence=1.0,

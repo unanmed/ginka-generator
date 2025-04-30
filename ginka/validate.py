@@ -6,10 +6,10 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-from minamo.model.model import MinamoModel
+from .critic.model import MinamoModel
 from .dataset import GinkaDataset
-from .model.loss import GinkaLoss
-from .model.model import GinkaModel
+from .generator.loss import GinkaLoss
+from .generator.model import GinkaModel
 from shared.image import matrix_to_image_cv
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

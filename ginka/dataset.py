@@ -6,13 +6,12 @@ from torch.utils.data import Dataset
 import torch
 import torch.nn.functional as F
 from typing import List
-from shared.utils import random_smooth_onehot
 
-STAGE1_MASK = [0, 1, 10, 11]
-STAGE1_REMOVE = [2, 3, 4, 5, 6, 7, 8, 9, 12, 13]
-STAGE2_MASK = [6, 7, 8, 9]
-STAGE2_REMOVE = [2, 3, 4, 5, 12, 13]
-STAGE3_MASK = [2, 3, 4, 5, 12, 13]
+STAGE1_MASK = [0, 1, 2, 29, 30]
+STAGE1_REMOVE = list(range(3, 29))
+STAGE2_MASK = [3, 4, 5, 6, 26, 27, 28]
+STAGE2_REMOVE = list(range(7, 26))
+STAGE3_MASK = list(range(7, 26))
 STAGE3_REMOVE = []
 
 def load_data(path: str):

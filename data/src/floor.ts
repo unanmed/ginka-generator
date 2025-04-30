@@ -28,16 +28,16 @@ function convert(
     const clipped: number[][] = [];
 
     // 1. 裁剪
-    for (let nx = x; nx < x + w; nx++) {
+    for (let ny = y; ny < y + w; ny++) {
         const row: number[] = [];
-        for (let ny = y; ny < y + h; ny++) {
+        for (let nx = y; nx < x + h; nx++) {
             row.push(map[ny][nx]);
         }
         clipped.push(row);
     }
 
     const res: number[][] = Array.from({ length: clipped.length }, () =>
-        Array.from({ length: clipped[0].length })
+        Array.from({ length: clipped[0].length }, () => 0)
     );
 
     // 2. 初步映射
@@ -278,12 +278,18 @@ function range(from: number, to: number) {
     return Array.from({ length }, (_, i) => i + from);
 }
 
-export function getGinkaRatio(map: number[][]) {
-    return [
-        getRatio(map, [1, ...range(3, 32)]),
-        getRatio(map, [26, 27, 28]),
-        getRatio(map, range(7, 26)),
-        getRatio(map, [3, 4, 5, 6]),
-        getCount(map, [29, 30])
-    ];
+export function getGinkaRatio(map: number[][]): number[] {
+    const arr: number[] = Array(16).fill(0);
+    arr[0] = getRatio(map, [1, ...range(3, 32)]);
+    arr[1] = getRatio(map, [1]);
+    arr[2] = getRatio(map, [2]);
+    arr[3] = getRatio(map, [3, 4, 5, 6]);
+    arr[4] = getRatio(map, [26, 27, 28]);
+    arr[5] = getRatio(map, range(7, 26));
+    arr[6] = getRatio(map, range(10, 19));
+    arr[7] = getRatio(map, range(19, 23));
+    arr[8] = getRatio(map, [7, 8, 9]);
+    arr[9] = getCount(map, [23, 24, 25]);
+    arr[10] = getCount(map, [29, 30]);
+    return arr;
 }
