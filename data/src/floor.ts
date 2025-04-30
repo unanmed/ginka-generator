@@ -239,11 +239,11 @@ function convert(
             const attr = (enemy.atk + enemy.def) * enemy.hp;
             const ad = attr - minAttr;
             if (ad < delta / 3 || delta === 0) {
-                res[ny][nx] = 25;
-            } else if (ad < (delta * 2) / 3) {
                 res[ny][nx] = 26;
-            } else {
+            } else if (ad < (delta * 2) / 3) {
                 res[ny][nx] = 27;
+            } else {
+                res[ny][nx] = 28;
             }
         }
     }
