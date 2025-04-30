@@ -189,7 +189,7 @@ function convert(
                 }
             } else if (dict.potion[tile] !== void 0) {
                 const value = dict.potion[tile];
-                if (maxGreenGem - minGreenGem < 1e-8) {
+                if (maxPotion - minPotion < 1e-8) {
                     res[ny][nx] = 19;
                 } else {
                     const level = Math.min(
