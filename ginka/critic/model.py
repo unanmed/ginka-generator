@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
-from torch_geometric.nn import global_max_pool, GCNConv, global_mean_pool
+from torch_geometric.nn import global_max_pool, GCNConv
 from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
 from shared.graph import batch_convert_soft_map_to_graph
 from .vision import MinamoVisionModel
 from .topo import MinamoTopoModel
-from ..common.cond import ConditionEncoder, ConditionInjector
+from ..common.cond import ConditionEncoder
 
 def print_memory(tag=""):
     print(f"{tag} | 当前显存: {torch.cuda.memory_allocated() / 1024**2:.2f} MB, 最大显存: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB")
@@ -24,7 +24,7 @@ class CNNHead(nn.Module):
         self.fc = nn.Sequential(
             spectral_norm(nn.Linear(in_ch*2*2, 1))
         )
-        self.proj = nn.Linear(256, in_ch*2*2)
+        self.proj = spectral_norm(nn.Linear(256, in_ch*2*2))
 
     def forward(self, x, cond):
         x = self.cnn(x)
@@ -39,7 +39,7 @@ class GCNHead(nn.Module):
     def __init__(self, in_dim):
         super().__init__()
         self.gcn = GCNConv(in_dim, in_dim)
-        self.proj = nn.Linear(256, in_dim)
+        self.proj = spectral_norm(nn.Linear(256, in_dim))
         self.fc = nn.Sequential(
             spectral_norm(nn.Linear(in_dim, 1))
         )
@@ -69,7 +69,7 @@ class MinamoModel(nn.Module):
         super().__init__()
         self.topo_model = MinamoTopoModel(tile_types)
         self.vision_model = MinamoVisionModel(tile_types)
-        self.cond = ConditionEncoder(64, 16, 128, 256)
+        self.cond = ConditionEncoder(64, 16, 256, 256)
         # 输出层
         self.head1 = MinamoScoreHead(512, 512)
         self.head2 = MinamoScoreHead(512, 512)

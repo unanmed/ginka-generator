@@ -15,7 +15,7 @@ class GinkaModel(nn.Module):
         """
         super().__init__()
         self.head = RandomInputHead()
-        self.cond = ConditionEncoder(64, 16, 128, 256)
+        self.cond = ConditionEncoder(64, 16, 256, 256)
         self.input = GinkaInput(32, 32, (13, 13), (32, 32))
         self.unet = GinkaUNet(32, base_ch, base_ch)
         self.output = GinkaOutput(base_ch, out_ch, (13, 13))

@@ -10,7 +10,11 @@ class StageHead(nn.Module):
         self.gcn_head = GCNBlock(in_ch, in_ch*2, in_ch, 32, 32)
         self.fusion = DoubleConvBlock([in_ch*2, in_ch*4, in_ch])
         self.pool = nn.Sequential(
-            nn.Conv2d(in_ch, in_ch, 3, padding=1, padding_mode='replicate'),
+            nn.Conv2d(in_ch, in_ch*2, 3, padding=1, padding_mode='replicate'),
+            nn.InstanceNorm2d(in_ch*2),
+            nn.ELU(),
+            
+            nn.Conv2d(in_ch*2, in_ch, 3, padding=1, padding_mode='replicate'),
             nn.InstanceNorm2d(in_ch),
             nn.ELU(),
             

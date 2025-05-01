@@ -51,7 +51,6 @@ def apply_curriculum_mask(
     mask_ratio: float                      # 遮挡比例 0~1
 ) -> torch.Tensor:
     C, H, W = maps.shape
-    device = maps.device
     masked_maps = maps.clone()
 
     # Step 1: 移除不需要的类别（全设为 0 类）

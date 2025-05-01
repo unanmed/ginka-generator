@@ -167,10 +167,6 @@ class GinkaUNet(nn.Module):
         """Ginka Model UNet 部分
         """
         super().__init__()
-        # self.input = GinkaTransformerEncoder(
-        #     in_dim=feat_dim, hidden_dim=feat_dim*2, out_dim=2*32*32, # 自动除以 token_size
-        #     token_size=4, ff_dim=feat_dim*2, num_layers=4
-        # )
         self.down1 = ConvBlock(in_ch, base_ch)
         self.down2 = GinkaGCNFusedEncoder(base_ch, base_ch*2, 16, 16)
         self.down3 = GinkaGCNFusedEncoder(base_ch*2, base_ch*4, 8, 8)
