@@ -21,7 +21,9 @@ class GinkaModel(nn.Module):
         self.output = GinkaOutput(base_ch, out_ch, (13, 13))
         
     def forward(self, x, stage, tag_cond, val_cond, random=False):
-        cond = self.cond(tag_cond, val_cond)
+        B, D = tag_cond.shape
+        stage_tensor = torch.Tensor([stage]).expand(B, 1).to(x.device)
+        cond = self.cond(tag_cond, val_cond, stage_tensor)
         if random:
             x_in = F.softmax(self.head(x, cond), dim=1)
         else:

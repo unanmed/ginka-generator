@@ -325,9 +325,11 @@ def train():
             low_loss_epochs = 0
         
         if train_stage >= 2:
-            train_stage += 1
-            
-            if train_stage == 5:
+            if stage_epoch % 5 == 1:
+                train_stage = 3
+            elif stage_epoch % 5 == 3:
+                train_stage = 4
+            elif stage_epoch % 5 == 0:
                 train_stage = 2
         
         if low_loss_epochs >= 5 and train_stage == 1 and stage_epoch >= curr_epoch:

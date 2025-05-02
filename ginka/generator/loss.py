@@ -375,7 +375,7 @@ def immutable_penalty_loss(
     return penalty
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=100, weight=[1, 0.5, 50, 0.2, 0.2, 0.2, 0.2]):
+    def __init__(self, lambda_gp=100, weight=[1, 0.5, 50, 0.2, 0.2, 0.2, 0.5]):
         # weight: 判别器损失，CE 损失，不可修改类型损失，图块类型损失，入口存在性损失，多样性损失，密度损失
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight

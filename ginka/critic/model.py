@@ -76,9 +76,11 @@ class MinamoModel(nn.Module):
         self.head3 = MinamoScoreHead(512, 512)
 
     def forward(self, map, graph, stage, tag_cond, val_cond):
+        B, D = tag_cond.shape
+        stage_tensor = torch.Tensor([stage]).expand(B, 1).to(map.device)
         vision = self.vision_model(map)
         topo = self.topo_model(graph)
-        cond = self.cond(tag_cond, val_cond)
+        cond = self.cond(tag_cond, val_cond, stage_tensor)
         if stage == 1:
             vision_score, topo_score = self.head1(vision, topo, graph, cond)
         elif stage == 2:

@@ -7,6 +7,13 @@ class ConditionEncoder(nn.Module):
         super().__init__()
         self.tag_embed = nn.Linear(tag_dim, hidden_dim)
         self.val_embed = nn.Linear(val_dim, hidden_dim)
+        self.stage_embed = nn.Sequential(
+            nn.Linear(1, 64),
+            nn.LayerNorm(64),
+            nn.ELU(),
+            
+            nn.Linear(64, hidden_dim),
+        )
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=hidden_dim, nhead=8, dim_feedforward=hidden_dim*4,
@@ -22,10 +29,11 @@ class ConditionEncoder(nn.Module):
             nn.Linear(hidden_dim*2, out_dim)
         )
         
-    def forward(self, tag, val):
+    def forward(self, tag, val, stage):
         tag = self.tag_embed(tag)
         val = self.val_embed(val)
-        feat = torch.stack([tag, val], dim=1)
+        stage = self.stage_embed(stage)
+        feat = torch.stack([tag, val, stage], dim=1)
         feat = self.encoder(feat)
         feat = torch.mean(feat, dim=1)
         feat = self.fusion(feat)
