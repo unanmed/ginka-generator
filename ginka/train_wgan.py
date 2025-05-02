@@ -151,16 +151,6 @@ def train():
                 optimizer_ginka.load_state_dict(data_ginka["optim_state"])
             if data_minamo.get("optim_state") is not None:
                 optimizer_minamo.load_state_dict(data_minamo["optim_state"])
-                
-        dataset.train_stage = train_stage
-        dataset.mask_ratio1 = mask_ratio
-        dataset.mask_ratio2 = mask_ratio
-        dataset.mask_ratio3 = mask_ratio
-        
-        dataset_val.train_stage = train_stage
-        dataset_val.mask_ratio1 = mask_ratio
-        dataset_val.mask_ratio2 = mask_ratio
-        dataset_val.mask_ratio3 = mask_ratio
             
         print("Train from loaded state.")
         
@@ -172,6 +162,16 @@ def train():
         stage_epoch = 0
         mask_ratio = 0.2
         
+    dataset.train_stage = train_stage
+    dataset.mask_ratio1 = mask_ratio
+    dataset.mask_ratio2 = mask_ratio
+    dataset.mask_ratio3 = mask_ratio
+    
+    dataset_val.train_stage = train_stage
+    dataset_val.mask_ratio1 = mask_ratio
+    dataset_val.mask_ratio2 = mask_ratio
+    dataset_val.mask_ratio3 = mask_ratio
+    
     low_loss_epochs = 0
         
     for epoch in tqdm(range(args.epochs), desc="WGAN Training", disable=disable_tqdm):
@@ -317,9 +317,9 @@ def train():
                         
         # 训练流程控制
         
-        if mask_ratio < 0.5 and avg_loss_ce < 0.2:
+        if mask_ratio < 0.5 and avg_loss_ce < 0.5:
             low_loss_epochs += 1
-        elif mask_ratio > 0.5 and avg_loss_ce < 0.3:
+        elif mask_ratio > 0.5 and avg_loss_ce < 0.5:
             low_loss_epochs += 1
         else:
             low_loss_epochs = 0

@@ -159,8 +159,11 @@ class GinkaWGANDataset(Dataset):
         item = self.data[idx]
         
         target = F.one_hot(torch.LongTensor(item['map']), num_classes=32).permute(2, 0, 1).float()  # [32, H, W]
+        C, H, W = target.shape
         tag_cond = torch.FloatTensor(item['tag'])
         val_cond = torch.FloatTensor(item['val'])
+        val_cond[9] = val_cond[9] / H / W
+        val_cond[10] = val_cond[10] / H / W
 
         if self.train_stage == 1:
             return self.handle_stage1(target, tag_cond, val_cond)
