@@ -60,6 +60,22 @@ class FusionModule(nn.Module):
         x = torch.cat([x1, x2], dim=1)
         x = self.conv(x)
         return x
+    
+class GinkaUNetInput(nn.Module):
+    def __init__(self, in_ch, out_ch, w, h):
+        super().__init__()
+        self.conv = ConvBlock(in_ch, in_ch)
+        self.gcn = GCNBlock(in_ch, in_ch*2, in_ch, w, h)
+        self.fusion = ConvBlock(in_ch*2, out_ch)
+        self.inject = ConditionInjector(256, out_ch)
+
+    def forward(self, x, cond):
+        x1 = self.conv(x)
+        x2 = self.gcn(x)
+        x = torch.cat([x1, x2], dim=1)
+        x = self.fusion(x)
+        x = self.inject(x, cond)
+        return x
 
 class GinkaEncoder(nn.Module):
     """编码器（下采样）部分"""
@@ -142,7 +158,7 @@ class GinkaBottleneck(nn.Module):
         super().__init__()
         self.transformer = GinkaTransformerEncoder(
             in_dim=module_ch*w*h, hidden_dim=module_ch*w*h, out_dim=module_ch*w*h,
-            token_size=16, ff_dim=1024, num_layers=4
+            token_size=16, ff_dim=1024, num_layers=6
         )
         self.gcn = GCNBlock(module_ch, module_ch*2, module_ch, 4, 4)
         self.fusion = nn.Conv2d(module_ch*3, module_ch, 1)
@@ -167,7 +183,7 @@ class GinkaUNet(nn.Module):
         """Ginka Model UNet 部分
         """
         super().__init__()
-        self.down1 = ConvBlock(in_ch, base_ch)
+        self.down1 = GinkaUNetInput(in_ch, base_ch, 32, 32)
         self.down2 = GinkaGCNFusedEncoder(base_ch, base_ch*2, 16, 16)
         self.down3 = GinkaGCNFusedEncoder(base_ch*2, base_ch*4, 8, 8)
         self.down4 = GinkaGCNFusedEncoder(base_ch*4, base_ch*8, 4, 4)
@@ -184,7 +200,7 @@ class GinkaUNet(nn.Module):
         )
         
     def forward(self, x, cond):
-        x1 = self.down1(x) # [B, 64, 32, 32]
+        x1 = self.down1(x, cond) # [B, 64, 32, 32]
         x2 = self.down2(x1, cond) # [B, 128, 16, 16]
         x3 = self.down3(x2, cond) # [B, 256, 8, 8]
         x4 = self.down4(x3, cond) # [B, 512, 4, 4]

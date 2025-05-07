@@ -16,8 +16,8 @@ class GinkaModel(nn.Module):
         super().__init__()
         self.head = RandomInputHead()
         self.cond = ConditionEncoder(64, 16, 256, 256)
-        self.input = GinkaInput(32, 32, (13, 13), (32, 32))
-        self.unet = GinkaUNet(32, base_ch, base_ch)
+        self.input = GinkaInput(32, 64, (13, 13), (32, 32))
+        self.unet = GinkaUNet(64, base_ch, base_ch)
         self.output = GinkaOutput(base_ch, out_ch, (13, 13))
         
     def forward(self, x, stage, tag_cond, val_cond, random=False):
@@ -28,7 +28,7 @@ class GinkaModel(nn.Module):
             x_in = F.softmax(self.head(x, cond), dim=1)
         else:
             x_in = x
-        x = self.input(x_in)
+        x = self.input(x_in, cond)
         x = self.unet(x, cond)
         x = self.output(x, stage, cond)
         return x, x_in
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     
     print(f"输入形状: feat={input.shape}")
     print(f"输出形状: output={output.shape}")
-    print(f"Head parameters: {sum(p.numel() for p in model.head.parameters())}")
+    print(f"Random parameters: {sum(p.numel() for p in model.head.parameters())}")
     print(f"Cond parameters: {sum(p.numel() for p in model.cond.parameters())}")
     print(f"Input parameters: {sum(p.numel() for p in model.input.parameters())}")
     print(f"UNet parameters: {sum(p.numel() for p in model.unet.parameters())}")

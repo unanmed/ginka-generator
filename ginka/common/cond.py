@@ -1,19 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .common import DoubleFCModule
 
 class ConditionEncoder(nn.Module):
     def __init__(self, tag_dim, val_dim, hidden_dim, out_dim):
         super().__init__()
-        self.tag_embed = nn.Linear(tag_dim, hidden_dim)
-        self.val_embed = nn.Linear(val_dim, hidden_dim)
-        self.stage_embed = nn.Sequential(
-            nn.Linear(1, 64),
-            nn.LayerNorm(64),
-            nn.ELU(),
-            
-            nn.Linear(64, hidden_dim),
-        )
+        self.tag_embed = DoubleFCModule(tag_dim, hidden_dim*2, hidden_dim)
+        self.val_embed = DoubleFCModule(val_dim, hidden_dim*2, hidden_dim)
+        self.stage_embed = DoubleFCModule(1, hidden_dim*2, hidden_dim)
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=hidden_dim, nhead=8, dim_feedforward=hidden_dim*4,

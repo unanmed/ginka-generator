@@ -62,3 +62,35 @@ class GCNBlock(nn.Module):
             offset = i * num_nodes_per_batch
             batch_edge_index.append(edge_index + offset)
         return torch.cat(batch_edge_index, dim=1)
+    
+class ConvFusionModule(nn.Module):
+    def __init__(self, in_ch, hidden_ch, out_ch, w: int, h: int):
+        super().__init__()
+        self.cnn = DoubleConvBlock([in_ch, hidden_ch, in_ch])
+        self.gcn = GCNBlock(in_ch, hidden_ch, in_ch, w, h)
+        self.fusion = DoubleConvBlock([in_ch*2, hidden_ch*2, out_ch])
+        
+    def forward(self, x):
+        x1 = self.cnn(x)
+        x2 = self.gcn(x)
+        x = torch.cat([x1, x2], dim=1)
+        x = self.fusion(x)
+        return x
+    
+class DoubleFCModule(nn.Module):
+    def __init__(self, in_dim, hidden_dim, out_dim):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ELU(),
+            
+            nn.Linear(hidden_dim, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.ELU()
+        )
+        
+    def forward(self, x):
+        x = self.fc(x)
+        return x
+        

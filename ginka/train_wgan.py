@@ -325,11 +325,11 @@ def train():
             low_loss_epochs = 0
         
         if train_stage >= 2:
-            if stage_epoch % 5 == 1:
+            if (epoch + 1) % 5 == 1:
                 train_stage = 3
-            elif stage_epoch % 5 == 3:
+            elif (epoch + 1) % 5 == 3:
                 train_stage = 4
-            elif stage_epoch % 5 == 0:
+            elif (epoch + 1) % 5 == 0:
                 train_stage = 2
         
         if low_loss_epochs >= 5 and train_stage == 1 and stage_epoch >= curr_epoch:
@@ -349,6 +349,9 @@ def train():
             g_steps = max(int(-avg_dis * 5), 1)
         else:
             g_steps = 1
+            
+        if avg_loss_ginka > 0:
+            g_steps += int(max(avg_loss_ginka * 5, 0))
             
         if avg_loss_minamo > 0:
             c_steps = int(min(5 + avg_loss_minamo * 5, 15))
