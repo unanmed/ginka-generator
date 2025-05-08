@@ -158,10 +158,13 @@ class GinkaBottleneck(nn.Module):
         super().__init__()
         self.transformer = GinkaTransformerEncoder(
             in_dim=module_ch*w*h, hidden_dim=module_ch*w*h, out_dim=module_ch*w*h,
-            token_size=16, ff_dim=1024, num_layers=6
+            token_size=16, ff_dim=1024, num_layers=4
         )
         self.gcn = GCNBlock(module_ch, module_ch*2, module_ch, 4, 4)
         self.fusion = nn.Conv2d(module_ch*3, module_ch, 1)
+        # self.conv = ConvBlock(module_ch, module_ch)
+        # self.gcn = GCNBlock(module_ch, module_ch*2, module_ch, w, h)
+        # self.fusion = FusionModule(module_ch*2, module_ch)
         self.inject = ConditionInjector(256, module_ch)
         
     def forward(self, x, cond):

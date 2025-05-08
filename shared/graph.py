@@ -35,16 +35,10 @@ def differentiable_convert_to_data(map_probs: torch.Tensor) -> Data:
         torch.stack([edge_dst, edge_src], dim=0)  # 反向连接
     ], dim=1).to(device, dtype=torch.long)
 
-    # 3. 计算可导的边权重
-    wall_class_idx = 1  # 假设类别 1 是墙
-    src_probs = torch.sigmoid(-map_probs[wall_class_idx].flatten()[edge_src])
-    dst_probs = torch.sigmoid(-map_probs[wall_class_idx].flatten()[edge_dst])
-    edge_mask = torch.nn.functional.softplus(src_probs * dst_probs).unsqueeze(1)  # [E, 1]
-
-    # 4. 计算边特征
+    # 3. 计算边特征
     src_feat = map_probs[:, edge_src // W, edge_src % W].T  # [E, C]
     dst_feat = map_probs[:, edge_dst // W, edge_dst % W].T  # [E, C]
-    edge_attr = (src_feat + dst_feat) / 2 * edge_mask  # [E, C]
+    edge_attr = (src_feat + dst_feat) / 2  # [E, C]
     
     edge_index, edge_attr = add_self_loops(edge_index, edge_attr)
 

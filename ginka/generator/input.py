@@ -27,15 +27,15 @@ class InputUpsample(nn.Module):
     def __init__(self, in_ch, hidden_ch=64, out_ch=64):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(in_ch, hidden_ch, kernel_size=3, padding=1),
+            ConvFusionModule(in_ch, hidden_ch, hidden_ch, 13, 13),
             nn.ELU(),
             
             nn.Upsample(scale_factor=2, mode='nearest'),  # 13x13 → 26x26
-            nn.Conv2d(hidden_ch, hidden_ch, kernel_size=3, padding=1),
+            ConvFusionModule(hidden_ch, hidden_ch, hidden_ch, 26, 26),
             nn.ELU(),
             
             nn.Upsample(size=(32, 32), mode='nearest'),  # 26x26 → 32x32
-            nn.Conv2d(hidden_ch, out_ch, kernel_size=3, padding=1),
+            ConvFusionModule(hidden_ch, hidden_ch, out_ch, 32, 32),
             nn.ELU(),
         )
 
@@ -52,11 +52,13 @@ class GinkaInput(nn.Module):
         self.enc2 = ConvFusionModule(out_ch, out_ch*4, out_ch, out_size[0], out_size[1])
         self.inject1 = ConditionInjector(256, in_ch)
         self.inject2 = ConditionInjector(256, out_ch)
+        self.inject3 = ConditionInjector(256, out_ch)
         
     def forward(self, x, cond):
         x = self.enc1(x)
         x = self.inject1(x, cond)
         x = self.upsample(x)
-        x = self.enc2(x)
         x = self.inject2(x, cond)
+        x = self.enc2(x)
+        x = self.inject3(x, cond)
         return x

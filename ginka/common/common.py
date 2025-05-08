@@ -25,9 +25,11 @@ class GCNBlock(nn.Module):
     def __init__(self, in_ch, hidden_ch, out_ch, w, h):
         super().__init__()
         self.conv1 = GCNConv(in_ch, hidden_ch)
-        self.conv2 = GCNConv(hidden_ch, out_ch)
+        self.conv2 = GCNConv(hidden_ch, hidden_ch)
+        self.conv3 = GCNConv(hidden_ch, out_ch)
         self.norm1 = nn.LayerNorm(hidden_ch)
-        self.norm2 = nn.LayerNorm(out_ch)
+        self.norm2 = nn.LayerNorm(hidden_ch)
+        self.norm3 = nn.LayerNorm(out_ch)
         self.single_edge_index, _ = grid(h, w)  # [2, E] for a single map
 
     def forward(self, x):
@@ -49,6 +51,8 @@ class GCNBlock(nn.Module):
         x = F.elu(self.norm1(x))
         x = self.conv2(x, edge_index)
         x = F.elu(self.norm2(x))
+        x = self.conv3(x, edge_index)
+        x = F.elu(self.norm3(x))
 
         # Reshape back to [B, C, H, W]
         x = x.view(B, H, W, -1).permute(0, 3, 1, 2)

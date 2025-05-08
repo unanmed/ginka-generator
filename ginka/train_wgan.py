@@ -350,8 +350,8 @@ def train():
         else:
             g_steps = 1
             
-        if avg_loss_ginka > 0:
-            g_steps += int(max(avg_loss_ginka * 5, 0))
+        if avg_loss_ginka > 0 and epoch > 20 and not args.resume:
+            g_steps += int(min(avg_loss_ginka * 5, 50))
             
         if avg_loss_minamo > 0:
             c_steps = int(min(5 + avg_loss_minamo * 5, 15))
