@@ -46,7 +46,7 @@ from shared.image import matrix_to_image_cv
 # 29. 楼梯入口
 # 30. 箭头入口
 
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
@@ -350,14 +350,14 @@ def train():
         else:
             g_steps = 1
             
-        if avg_loss_ginka > 0 and epoch > 20 and not args.resume:
-            g_steps += int(min(avg_loss_ginka * 5, 50))
+        # if avg_loss_ginka > 0 and epoch > 20 and not args.resume:
+        #     g_steps += int(min(avg_loss_ginka * 5, 50))
             
         if avg_loss_minamo > 0:
             c_steps = int(min(5 + avg_loss_minamo * 5, 15))
         else:
             c_steps = 5
-                        
+
         dataset.train_stage = train_stage
         dataset_val.train_stage = train_stage
         dataset.mask_ratio1 = dataset.mask_ratio2 = dataset.mask_ratio3 = mask_ratio

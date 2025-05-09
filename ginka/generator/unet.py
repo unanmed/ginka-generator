@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from shared.attention import ChannelAttention
-from ..common.common import GCNBlock
+from ..common.common import GCNBlock, TransformerGCNBlock
 from ..common.cond import ConditionInjector
 
 class GinkaTransformerEncoder(nn.Module):
@@ -65,7 +65,7 @@ class GinkaUNetInput(nn.Module):
     def __init__(self, in_ch, out_ch, w, h):
         super().__init__()
         self.conv = ConvBlock(in_ch, in_ch)
-        self.gcn = GCNBlock(in_ch, in_ch*2, in_ch, w, h)
+        self.gcn = TransformerGCNBlock(in_ch, in_ch*2, in_ch, w, h)
         self.fusion = ConvBlock(in_ch*2, out_ch)
         self.inject = ConditionInjector(256, out_ch)
 
@@ -95,7 +95,7 @@ class GinkaGCNFusedEncoder(nn.Module):
     def __init__(self, in_ch, out_ch, w, h):
         super().__init__()
         self.conv = ConvBlock(in_ch, out_ch)
-        self.gcn = GCNBlock(out_ch, out_ch*2, out_ch, w, h)
+        self.gcn = TransformerGCNBlock(out_ch, out_ch*2, out_ch, w, h)
         self.pool = nn.MaxPool2d(2)
         self.fusion = FusionModule(out_ch*2, out_ch)
         self.inject = ConditionInjector(256, out_ch)
@@ -140,7 +140,7 @@ class GinkaGCNFusedDecoder(nn.Module):
         super().__init__()
         self.upsample = GinkaUpSample(in_ch, in_ch // 2)
         self.conv = ConvBlock(in_ch, out_ch)
-        self.gcn = GCNBlock(out_ch, out_ch*2, out_ch, w, h)
+        self.gcn = TransformerGCNBlock(out_ch, out_ch*2, out_ch, w, h)
         self.fusion = FusionModule(out_ch*2, out_ch)
         self.inject = ConditionInjector(256, out_ch)
         
@@ -156,26 +156,27 @@ class GinkaGCNFusedDecoder(nn.Module):
 class GinkaBottleneck(nn.Module):
     def __init__(self, module_ch, w, h):
         super().__init__()
-        self.transformer = GinkaTransformerEncoder(
-            in_dim=module_ch*w*h, hidden_dim=module_ch*w*h, out_dim=module_ch*w*h,
-            token_size=16, ff_dim=1024, num_layers=4
-        )
-        self.gcn = GCNBlock(module_ch, module_ch*2, module_ch, 4, 4)
-        self.fusion = nn.Conv2d(module_ch*3, module_ch, 1)
-        # self.conv = ConvBlock(module_ch, module_ch)
-        # self.gcn = GCNBlock(module_ch, module_ch*2, module_ch, w, h)
-        # self.fusion = FusionModule(module_ch*2, module_ch)
+        # self.transformer = GinkaTransformerEncoder(
+        #     in_dim=module_ch*w*h, hidden_dim=module_ch*w*h, out_dim=module_ch*w*h,
+        #     token_size=16, ff_dim=1024, num_layers=4
+        # )
+        # self.gcn = TransformerGCNBlock(module_ch, module_ch*2, module_ch, 4, 4)
+        # self.fusion = nn.Conv2d(module_ch*3, module_ch, 1)
+        self.conv = ConvBlock(module_ch, module_ch)
+        self.gcn = TransformerGCNBlock(module_ch, module_ch*2, module_ch, w, h)
+        self.fusion = nn.Conv2d(module_ch*2, module_ch, 1)
         self.inject = ConditionInjector(256, module_ch)
         
     def forward(self, x, cond):
         B = x.size(0)
         
-        x1 = x.view(B, 512, 16).permute(0, 2, 1) # [B, 16, in_ch]
-        x1 = self.transformer(x1)
-        x1 = x1.permute(0, 2, 1).view(B, 512, 4, 4) # [B, out_ch, 4, 4]
+        # x1 = x.view(B, 512, 16).permute(0, 2, 1) # [B, 16, in_ch]
+        # x1 = self.transformer(x1)
+        # x1 = x1.permute(0, 2, 1).view(B, 512, 4, 4) # [B, out_ch, 4, 4]
+        x1 = self.conv(x)
         x2 = self.gcn(x)
         
-        x = torch.cat([x, x1, x2], dim=1)
+        x = torch.cat([x1, x2], dim=1)
         x = self.fusion(x)
         x = self.inject(x, cond)
         
