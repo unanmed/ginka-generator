@@ -10,13 +10,10 @@ class MinamoVisionModel(nn.Module):
             spectral_norm(nn.Conv2d(in_ch, in_ch*2, 3)), # 11*11
             nn.LeakyReLU(0.2),
             
-            spectral_norm(nn.Conv2d(in_ch*2, in_ch*4, 3)), #9*9
+            spectral_norm(nn.Conv2d(in_ch*2, in_ch*8, 3)), #9*9
             nn.LeakyReLU(0.2),
             
-            spectral_norm(nn.Conv2d(in_ch*4, in_ch*8, 3)), # 7*7
-            nn.LeakyReLU(0.2),
-            
-            spectral_norm(nn.Conv2d(in_ch*8, out_ch, 3)), # 5*5
+            spectral_norm(nn.Conv2d(in_ch*8, out_ch, 3)), # 7*7
             nn.LeakyReLU(0.2),
         )
         

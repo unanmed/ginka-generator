@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from shared.attention import ChannelAttention
-from ..common.common import GCNBlock, TransformerGCNBlock
+from ..common.common import GCNBlock, TransformerGCNBlock, DoubleConvBlock, ConvFusionModule
 from ..common.cond import ConditionInjector
 
 class GinkaTransformerEncoder(nn.Module):
@@ -37,16 +37,17 @@ class GinkaTransformerEncoder(nn.Module):
 class ConvBlock(nn.Module):
     def __init__(self, in_ch, out_ch, attn=True):
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 3, padding=1, padding_mode='replicate'),
-            nn.InstanceNorm2d(out_ch),
-            nn.ELU(),
-            nn.Conv2d(out_ch, out_ch, 3, padding=1, padding_mode='replicate'),
-            nn.InstanceNorm2d(out_ch),
-        )
-        if attn:
-            self.conv.append(ChannelAttention(out_ch))
-        self.conv.append(nn.ELU())
+        self.conv = DoubleConvBlock([in_ch, out_ch, out_ch])
+        # self.conv = nn.Sequential(
+        #     nn.Conv2d(in_ch, out_ch, 3, padding=1, padding_mode='replicate'),
+        #     nn.InstanceNorm2d(out_ch),
+        #     nn.ELU(),
+        #     nn.Conv2d(out_ch, out_ch, 3, padding=1, padding_mode='replicate'),
+        #     nn.InstanceNorm2d(out_ch),
+        # )
+        # if attn:
+        #     self.conv.append(ChannelAttention(out_ch))
+        # self.conv.append(nn.ELU())
         
     def forward(self, x):
         return self.conv(x)
@@ -64,47 +65,24 @@ class FusionModule(nn.Module):
 class GinkaUNetInput(nn.Module):
     def __init__(self, in_ch, out_ch, w, h):
         super().__init__()
-        self.conv = ConvBlock(in_ch, in_ch)
-        self.gcn = TransformerGCNBlock(in_ch, in_ch*2, in_ch, w, h)
-        self.fusion = ConvBlock(in_ch*2, out_ch)
-        self.inject = ConditionInjector(256, out_ch)
-
-    def forward(self, x, cond):
-        x1 = self.conv(x)
-        x2 = self.gcn(x)
-        x = torch.cat([x1, x2], dim=1)
-        x = self.fusion(x)
-        x = self.inject(x, cond)
-        return x
-
-class GinkaEncoder(nn.Module):
-    """编码器（下采样）部分"""
-    def __init__(self, in_ch, out_ch):
-        super().__init__()
-        self.conv = ConvBlock(in_ch, out_ch)
-        self.pool = nn.MaxPool2d(2)
+        self.conv = ConvFusionModule(in_ch, out_ch, out_ch, w, h)
         self.inject = ConditionInjector(256, out_ch)
 
     def forward(self, x, cond):
         x = self.conv(x)
-        x = self.pool(x)
         x = self.inject(x, cond)
         return x
     
-class GinkaGCNFusedEncoder(nn.Module):
+class GinkaEncoder(nn.Module):
     def __init__(self, in_ch, out_ch, w, h):
         super().__init__()
-        self.conv = ConvBlock(in_ch, out_ch)
-        self.gcn = TransformerGCNBlock(out_ch, out_ch*2, out_ch, w, h)
         self.pool = nn.MaxPool2d(2)
-        self.fusion = FusionModule(out_ch*2, out_ch)
+        self.conv = ConvFusionModule(in_ch, out_ch, out_ch, w, h)
         self.inject = ConditionInjector(256, out_ch)
 
     def forward(self, x, cond):
-        x = self.conv(x)
         x = self.pool(x)
-        x2 = self.gcn(x)
-        x = self.fusion(x, x2)
+        x = self.conv(x)
         x = self.inject(x, cond)
         return x
     
@@ -114,42 +92,29 @@ class GinkaUpSample(nn.Module):
         self.conv = nn.Sequential(
             nn.ConvTranspose2d(in_ch, out_ch, 2, stride=2),
             nn.InstanceNorm2d(out_ch),
-            nn.ELU(),
+            nn.GELU(),
+            
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, padding_mode='replicate'),
+            nn.InstanceNorm2d(out_ch),
+            nn.GELU()
         )
         
     def forward(self, x):
         return self.conv(x)
     
 class GinkaDecoder(nn.Module):
-    """解码器（上采样）部分"""
-    def __init__(self, in_ch, out_ch):
-        super().__init__()
-        self.upsample = GinkaUpSample(in_ch, in_ch // 2)
-        self.conv = ConvBlock(in_ch, out_ch)
-        self.inject = ConditionInjector(256, out_ch)
-        
-    def forward(self, x, feat, cond):
-        x = self.upsample(x)
-        x = torch.cat([x, feat], dim=1)
-        x = self.conv(x)
-        x = self.inject(x, cond)
-        return x
-    
-class GinkaGCNFusedDecoder(nn.Module):
     def __init__(self, in_ch, out_ch, w, h):
         super().__init__()
         self.upsample = GinkaUpSample(in_ch, in_ch // 2)
-        self.conv = ConvBlock(in_ch, out_ch)
-        self.gcn = TransformerGCNBlock(out_ch, out_ch*2, out_ch, w, h)
-        self.fusion = FusionModule(out_ch*2, out_ch)
+        self.fusion = nn.Conv2d(in_ch, in_ch, 1)
+        self.conv = ConvFusionModule(in_ch, out_ch, out_ch, w, h)
         self.inject = ConditionInjector(256, out_ch)
         
     def forward(self, x, feat, cond):
         x = self.upsample(x)
         x = torch.cat([x, feat], dim=1)
+        x = self.fusion(x)
         x = self.conv(x)
-        x2 = self.gcn(x)
-        x = self.fusion(x, x2)
         x = self.inject(x, cond)
         return x
     
@@ -162,58 +127,62 @@ class GinkaBottleneck(nn.Module):
         # )
         # self.gcn = TransformerGCNBlock(module_ch, module_ch*2, module_ch, 4, 4)
         # self.fusion = nn.Conv2d(module_ch*3, module_ch, 1)
-        self.conv = ConvBlock(module_ch, module_ch)
-        self.gcn = TransformerGCNBlock(module_ch, module_ch*2, module_ch, w, h)
-        self.fusion = nn.Conv2d(module_ch*2, module_ch, 1)
+        self.conv = ConvFusionModule(module_ch, module_ch, module_ch, w, h)
         self.inject = ConditionInjector(256, module_ch)
         
     def forward(self, x, cond):
-        B = x.size(0)
-        
         # x1 = x.view(B, 512, 16).permute(0, 2, 1) # [B, 16, in_ch]
         # x1 = self.transformer(x1)
         # x1 = x1.permute(0, 2, 1).view(B, 512, 4, 4) # [B, out_ch, 4, 4]
-        x1 = self.conv(x)
-        x2 = self.gcn(x)
-        
-        x = torch.cat([x1, x2], dim=1)
-        x = self.fusion(x)
+        x = self.conv(x)
         x = self.inject(x, cond)
-        
         return x
-
-class GinkaUNet(nn.Module):
-    def __init__(self, in_ch=32, base_ch=64, out_ch=32):
-        """Ginka Model UNet 部分
-        """
+    
+class GinkaEncoderPath(nn.Module):
+    def __init__(self, in_ch, base_ch):
         super().__init__()
         self.down1 = GinkaUNetInput(in_ch, base_ch, 32, 32)
-        self.down2 = GinkaGCNFusedEncoder(base_ch, base_ch*2, 16, 16)
-        self.down3 = GinkaGCNFusedEncoder(base_ch*2, base_ch*4, 8, 8)
-        self.down4 = GinkaGCNFusedEncoder(base_ch*4, base_ch*8, 4, 4)
-        self.bottleneck = GinkaBottleneck(base_ch*8, 4, 4)
-        
-        self.up1 = GinkaGCNFusedDecoder(base_ch*8, base_ch*4, 8, 8)
-        self.up2 = GinkaGCNFusedDecoder(base_ch*4, base_ch*2, 16, 16)
-        self.up3 = GinkaGCNFusedDecoder(base_ch*2, base_ch, 32, 32)
-
-        self.final = nn.Sequential(
-            nn.Conv2d(base_ch, out_ch, 1),
-            nn.InstanceNorm2d(out_ch),
-            nn.ELU(),
-        )
+        self.down2 = GinkaEncoder(base_ch, base_ch*2, 16, 16)
+        self.down3 = GinkaEncoder(base_ch*2, base_ch*4, 8, 8)
+        self.down4 = GinkaEncoder(base_ch*4, base_ch*8, 4, 4)
         
     def forward(self, x, cond):
         x1 = self.down1(x, cond) # [B, 64, 32, 32]
         x2 = self.down2(x1, cond) # [B, 128, 16, 16]
         x3 = self.down3(x2, cond) # [B, 256, 8, 8]
         x4 = self.down4(x3, cond) # [B, 512, 4, 4]
-        x4 = self.bottleneck(x4, cond) # [B, 512, 4, 4]
         
-        # 上采样
+        return x1, x2, x3, x4
+    
+class GinkaDecoderPath(nn.Module):
+    def __init__(self, base_ch):
+        super().__init__()
+        self.up1 = GinkaDecoder(base_ch*8, base_ch*4, 8, 8)
+        self.up2 = GinkaDecoder(base_ch*4, base_ch*2, 16, 16)
+        self.up3 = GinkaDecoder(base_ch*2, base_ch, 32, 32)
+        
+    def forward(self, x1, x2, x3, x4, cond):
         x = self.up1(x4, x3, cond) # [B, 256, 8, 8]
         x = self.up2(x, x2, cond) # [B, 128, 16, 16]
         x = self.up3(x, x1, cond) # [B, 64, 32, 32]
+        return x
+
+class GinkaUNet(nn.Module):
+    def __init__(self, in_ch=32, base_ch=32, out_ch=32):
+        """Ginka Model UNet 部分
+        """
+        super().__init__()
+        self.enc = GinkaEncoderPath(in_ch, base_ch)
+        self.bottleneck = GinkaBottleneck(base_ch*8, 4, 4)
+        self.dec = GinkaDecoderPath(base_ch)
+
+        self.final = ConvFusionModule(base_ch, base_ch, out_ch, 32, 32)
+        
+    def forward(self, x, cond):
+        x1, x2, x3, x4 = self.enc(x, cond)
+        x4 = self.bottleneck(x4, cond) # [B, 512, 4, 4]
+        x = self.dec(x1, x2, x3, x4, cond)
+
         x = self.final(x) # [B, 32, 32, 32]
         
         return x

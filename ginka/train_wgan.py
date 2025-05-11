@@ -6,12 +6,13 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 import cv2
+import numpy as np
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from .generator.model import GinkaModel
 from .dataset import GinkaWGANDataset
 from .generator.loss import WGANGinkaLoss
-from .critic.model import MinamoModel
+from .critic.model import MinamoModel2
 from shared.image import matrix_to_image_cv
 
 # 标签定义：
@@ -105,7 +106,7 @@ def train():
     stage_epoch = 0 # 记录当前阶段的 epoch 数，用于控制训练过程
     
     ginka = GinkaModel().to(device)
-    minamo = MinamoModel().to(device)
+    minamo = MinamoModel2().to(device)
     
     dataset = GinkaWGANDataset(args.train, device)
     dataset_val = GinkaWGANDataset(args.validate, device)
@@ -113,7 +114,7 @@ def train():
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE)
     
     optimizer_ginka = optim.Adam(ginka.parameters(), lr=1e-4, betas=(0.0, 0.9))
-    optimizer_minamo = optim.Adam(minamo.parameters(), lr=1e-5, betas=(0.0, 0.9))
+    optimizer_minamo = optim.Adam(minamo.parameters(), lr=2e-5, betas=(0.0, 0.9))
     
     # scheduler_ginka = optim.lr_scheduler.CosineAnnealingLR(optimizer_ginka, T_max=args.epochs)
     # scheduler_minamo = optim.lr_scheduler.CosineAnnealingLR(optimizer_minamo, T_max=args.epochs)
@@ -201,14 +202,24 @@ def train():
                         fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, tag_cond, val_cond, True)
                         
                     elif train_stage == 3 or train_stage == 4:
-                        fake1, fake2, fake3, _ = gen_total(ginka, masked1, tag_cond, val_cond, True, True, train_stage == 4)
+                        fake1, fake2, fake3, x_in = gen_total(ginka, masked1, tag_cond, val_cond, True, True, train_stage == 4)
+                        
+                if train_stage == 4:
+                    loss_d0, dis0 = criterion.discriminator_loss(minamo, 0, masked2, x_in, tag_cond, val_cond)
                         
                 loss_d1, dis1 = criterion.discriminator_loss(minamo, 1, real1, fake1, tag_cond, val_cond)
                 loss_d2, dis2 = criterion.discriminator_loss(minamo, 2, real2, fake2, tag_cond, val_cond)
                 loss_d3, dis3 = criterion.discriminator_loss(minamo, 3, real3, fake3, tag_cond, val_cond)
                 
-                dis_avg = (dis1 + dis2 + dis3) / 3.0
-                loss_d_avg = (loss_d1 + loss_d2 + loss_d3) / 3.0
+                dis = [dis1, dis2, dis3]
+                loss_d = [loss_d1, loss_d2, loss_d3]
+                
+                if train_stage == 4:
+                    dis.append(dis0)
+                    loss_d.append(loss_d0)
+                    
+                dis_avg = sum(dis) / len(dis)
+                loss_d_avg = sum(loss_d) / len(loss_d)
 
                 # 反向传播
                 loss_d_avg.backward()
@@ -230,7 +241,7 @@ def train():
                     loss_g2, _, loss_ce_g2, _ = criterion.generator_loss(minamo, 2, mask_ratio, real2, fake2, masked2, tag_cond, val_cond)
                     loss_g3, _, loss_ce_g3, _ = criterion.generator_loss(minamo, 3, mask_ratio, real3, fake3, masked3, tag_cond, val_cond)
                     
-                    loss_g = (loss_g1 + loss_g2 + loss_g3) / 3.0
+                    loss_g = (loss_g1 * 3 + loss_g2 + loss_g3) / 5.0
                     loss_ce = max(loss_ce_g1, loss_ce_g2, loss_ce_g3)
                     
                     loss_g.backward()
@@ -240,19 +251,16 @@ def train():
                     
                 elif train_stage == 3 or train_stage == 4:
                     fake1, fake2, fake3, x_in = gen_total(ginka, masked1, tag_cond, val_cond, True, False, train_stage == 4)
-                    
-                    if train_stage == 3:
-                        loss_g1 = criterion.generator_loss_total_with_input(minamo, 1, fake1, masked1, tag_cond, val_cond)
-                    else:
-                        loss_g1 = criterion.generator_loss_total(minamo, 1, fake1, tag_cond, val_cond)
+
+                    loss_g1 = criterion.generator_loss_total_with_input(minamo, 1, fake1, x_in, tag_cond, val_cond)
                     loss_g2 = criterion.generator_loss_total_with_input(minamo, 2, fake2, fake1, tag_cond, val_cond)
                     loss_g3 = criterion.generator_loss_total_with_input(minamo, 3, fake3, fake2, tag_cond, val_cond)
                     
                     if train_stage == 4:
-                        loss_head = criterion.generator_input_head_loss(x_in)
+                        loss_head = criterion.generator_input_head_loss(minamo, x_in, tag_cond, val_cond)
                         loss_head.backward(retain_graph=True)
                     
-                    loss_g = (loss_g1 + loss_g2 + loss_g3) / 3.0
+                    loss_g = (loss_g1 * 3 + loss_g2 + loss_g3) / 5.0
                     loss_g.backward()
                     optimizer_ginka.step()
                     loss_total_ginka += loss_g.detach()
@@ -286,6 +294,8 @@ def train():
             }, f"result/wgan/minamo-{epoch + 1}.pth")
             
             idx = 0
+            gap = 5
+            color = (255, 255, 255)  # 白色
             with torch.no_grad():
                 for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
                     real1 = batch["real1"].to(device)
@@ -301,17 +311,42 @@ def train():
                         fake1, fake2, fake3 = gen_curriculum(ginka, masked1, masked2, masked3, tag_cond, val_cond, True)
                             
                     elif train_stage == 3 or train_stage == 4:
-                        fake1, fake2, fake3, _ = gen_total(ginka, masked1, tag_cond, val_cond, True, True, train_stage == 4)
+                        fake1, fake2, fake3, x_in = gen_total(ginka, masked1, tag_cond, val_cond, True, True, train_stage == 4)
+                        x_in = torch.argmax(x_in, dim=1).cpu().numpy()
                         
                     fake1 = torch.argmax(fake1, dim=1).cpu().numpy()
                     fake2 = torch.argmax(fake2, dim=1).cpu().numpy()
                     fake3 = torch.argmax(fake3, dim=1).cpu().numpy()
-                        
+                    masked1 = torch.argmax(masked1, dim=1).cpu().numpy()
+                    masked2 = torch.argmax(masked2, dim=1).cpu().numpy()
+                    masked3 = torch.argmax(masked3, dim=1).cpu().numpy()
+
                     for i in range(fake1.shape[0]):
-                        for key, one in enumerate([fake1, fake2, fake3]):
-                            map_matrix = one[i]
-                            image = matrix_to_image_cv(map_matrix, tile_dict)
-                            cv2.imwrite(f"result/ginka_img/{idx}_{key}.png", image)
+                        fake1_img = matrix_to_image_cv(fake1[i], tile_dict)
+                        fake2_img = matrix_to_image_cv(fake2[i], tile_dict)
+                        fake3_img = matrix_to_image_cv(fake3[i], tile_dict)
+                        if train_stage == 1 or train_stage == 2:
+                            vline = np.full((416, gap, 3), color, dtype=np.uint8)  # 垂直分割线
+                            hline = np.full((gap, 3 * 416 + gap * 2, 3), color, dtype=np.uint8)  # 水平分割线
+                            in1_img = matrix_to_image_cv(masked1[i], tile_dict)
+                            in2_img = matrix_to_image_cv(masked2[i], tile_dict)
+                            in3_img = matrix_to_image_cv(masked3[i], tile_dict)
+                            img = np.block([
+                                [[in1_img], [vline], [in2_img], [vline], [in3_img]],
+                                [[hline]],
+                                [[fake1_img], [vline], [fake2_img], [vline], [fake3_img]]
+                            ])
+                        elif train_stage == 3 or train_stage == 4:
+                            vline = np.full((416, gap, 3), color, dtype=np.uint8)  # 垂直分割线
+                            hline = np.full((gap, 2 * 416 + gap, 3), color, dtype=np.uint8)  # 水平分割线
+                            in_img = matrix_to_image_cv(x_in[i], tile_dict)
+                            img = np.block([
+                                [[in_img], [vline], [fake1_img]],
+                                [[hline]],
+                                [[fake2_img], [vline], [fake3_img]]
+                            ])
+                        
+                        cv2.imwrite(f"result/ginka_img/{idx}.png", img)
 
                         idx += 1
                         

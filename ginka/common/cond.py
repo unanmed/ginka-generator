@@ -6,22 +6,22 @@ from .common import DoubleFCModule
 class ConditionEncoder(nn.Module):
     def __init__(self, tag_dim, val_dim, hidden_dim, out_dim):
         super().__init__()
-        self.tag_embed = DoubleFCModule(tag_dim, hidden_dim*2, hidden_dim)
-        self.val_embed = DoubleFCModule(val_dim, hidden_dim*2, hidden_dim)
-        self.stage_embed = DoubleFCModule(1, hidden_dim*2, hidden_dim)
+        self.tag_embed = DoubleFCModule(tag_dim, hidden_dim, hidden_dim)
+        self.val_embed = DoubleFCModule(val_dim, hidden_dim, hidden_dim)
+        self.stage_embed = DoubleFCModule(1, hidden_dim, hidden_dim)
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=hidden_dim, nhead=8, dim_feedforward=hidden_dim*4,
                 batch_first=True
             ),
-            num_layers=6
+            num_layers=4
         )
         self.fusion = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim*2),
-            nn.LayerNorm(hidden_dim*2),
-            nn.ELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
             
-            nn.Linear(hidden_dim*2, out_dim)
+            nn.Linear(hidden_dim, out_dim)
         )
         
     def forward(self, tag, val, stage):
@@ -38,18 +38,10 @@ class ConditionInjector(nn.Module):
     def __init__(self, cond_dim, out_dim):
         super().__init__()
         self.gamma_layer = nn.Sequential(
-            nn.Linear(cond_dim, cond_dim*2),
-            nn.LayerNorm(cond_dim*2),
-            nn.ELU(),
-            
-            nn.Linear(cond_dim*2, out_dim)
+            nn.Linear(cond_dim, out_dim)
         )
         self.beta_layer = nn.Sequential(
-            nn.Linear(cond_dim, cond_dim*2),
-            nn.LayerNorm(cond_dim*2),
-            nn.ELU(),
-            
-            nn.Linear(cond_dim*2, out_dim)
+            nn.Linear(cond_dim, out_dim)
         )
 
     def forward(self, x, cond):

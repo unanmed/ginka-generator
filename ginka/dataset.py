@@ -142,13 +142,14 @@ class GinkaWGANDataset(Dataset):
         removed1 = apply_curriculum_remove(target, STAGE1_REMOVE)
         removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
         removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
+        _, masked = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, 0.5)
         rand = torch.rand(32, 32, 32, device=target.device)
         
         return {
             "real1": removed1,
             "masked1": rand,
             "real2": removed2,
-            "masked2": torch.zeros_like(target),
+            "masked2": masked,
             "real3": removed3,
             "masked3": torch.zeros_like(target),
             "tag_cond": tag_cond,

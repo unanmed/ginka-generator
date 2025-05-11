@@ -1,12 +1,7 @@
-import math
-from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.data import Data
-from shared.graph import batch_convert_soft_map_to_graph
-from shared.constant import VISION_WEIGHT, TOPO_WEIGHT
-from ..critic.model import MinamoModel
 
 CLASS_NUM = 32
 ILLEGAL_MAX_NUM = 30
@@ -156,15 +151,15 @@ def entrance_constraint_loss(
     )
     return total_loss
 
-def input_head_illegal_loss(input_map, allowed_classes=(0, 1)):
+def input_head_illegal_loss(input_map, allowed_classes=[0, 1, 2]):
     C = input_map.shape[1]
-    mask = torch.ones(C, device=input_map.device)
-    mask[list(allowed_classes)] = 0  # 屏蔽允许的类别，其余为 1
-    illegal_class_penalty = (input_map * mask.view(1, -1, 1, 1)).sum() / input_map.numel()
-    
-    return illegal_class_penalty
+    unallowed = get_not_allowed(allowed_classes, include_illegal=True)
+    illegal = input_map[:, unallowed, :, :]
+    penalty = torch.sum(illegal)
 
-def input_head_wall_loss(input_map, max_wall_ratio=0.2, wall_class=1):
+    return penalty
+
+def input_head_wall_loss(input_map, max_wall_ratio=0.2, wall_class=[1, 2]):
     wall_prob = input_map[:, wall_class]  # [B, H, W]
     wall_ratio = wall_prob.mean()         # 计算平均墙体占比
     wall_penalty = torch.clamp(wall_ratio - max_wall_ratio, min=0.0)  # 超过则惩罚
@@ -241,6 +236,16 @@ def immutable_penalty_loss(
 
     return penalty
 
+def modifiable_penalty_loss(
+    probs: torch.Tensor, input: torch.Tensor, modifiable_classes: list[int]
+) -> torch.Tensor:
+    target_modifiable = input[:, modifiable_classes, :, :]
+    pred_modifiable = probs[:, modifiable_classes, :, :]
+    existed = torch.clamp(target_modifiable - pred_modifiable, min=0.0, max=1.0)
+    penalty = F.mse_loss(existed, torch.zeros_like(existed, device=existed.device))
+    
+    return penalty
+
 def illegal_penalty_loss(pred: torch.Tensor, legal_classes: list[int]):
     not_allowed = get_not_allowed(legal_classes, include_illegal=True)
     input_mask = pred[:, not_allowed, :, :]
@@ -249,43 +254,40 @@ def illegal_penalty_loss(pred: torch.Tensor, legal_classes: list[int]):
     return penalty
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=100, weight=[1, 0.5, 50, 0.2, 0.2, 0.05, 0.5]):
-        # weight: 判别器损失，CE 损失，不可修改类型损失和非法图块损失，图块类型损失，入口存在性损失，多样性损失，密度损失
+    def __init__(self, lambda_gp=100, weight=[1, 0.4, 50, 0.2, 0.2, 0.05, 0.4]):
+        # weight: 
+        # 1. 判别器损失及图块维持损失（可修改部分的已有内容不可修改）
+        # 2. CE 损失
+        # 3. 不可修改类型损失和非法图块损失
+        # 4. 图块类型损失
+        # 5. 入口存在性损失
+        # 6. 多样性损失
+        # 7. 密度损失
         self.lambda_gp = lambda_gp  # 梯度惩罚系数
         self.weight = weight
         
     def compute_gradient_penalty(self, critic, stage, real_data, fake_data, tag_cond, val_cond):
         # 进行插值
         batch_size = real_data.size(0)
-        epsilon_data = torch.randn(batch_size, 1, 1, 1, device=real_data.device)
+        epsilon_data = torch.rand(batch_size, 1, 1, 1, device=real_data.device)
         interp_data = interpolate_data(real_data, fake_data, epsilon_data).to(real_data.device)
-        interp_graph = batch_convert_soft_map_to_graph(interp_data).to(real_data.device)
         
         # 对图像进行反向传播并计算梯度
         interp_data.requires_grad_()
-        interp_graph.x.requires_grad_()
         
-        _, d_vis_score, d_topo_score = critic(interp_data, interp_graph, stage, tag_cond, val_cond)
+        d_score = critic(interp_data, stage, tag_cond, val_cond)
         
         # 计算梯度
-        grad_vis = torch.autograd.grad(
-            outputs=d_vis_score, inputs=interp_data,
-            grad_outputs=torch.ones_like(d_vis_score),
-            create_graph=True, retain_graph=True, only_inputs=True
-        )[0]
-        grad_topo = torch.autograd.grad(
-            outputs=d_topo_score, inputs=interp_graph.x,
-            grad_outputs=torch.ones_like(d_topo_score),
+        grad = torch.autograd.grad(
+            outputs=d_score, inputs=interp_data,
+            grad_outputs=torch.ones_like(d_score),
             create_graph=True, retain_graph=True, only_inputs=True
         )[0]
 
         # 计算梯度的 L2 范数
-        grad_norm_vis = grad_vis.view(batch_size, -1).norm(2, dim=1)
-        grad_norm_topo = grad_topo.view(batch_size, -1).norm(2, dim=1)
+        grad_norm = grad.reshape(batch_size, -1).norm(2, dim=1)
         # 计算梯度惩罚项
-        gp_loss_vis = ((grad_norm_vis - 1.0) ** 2).mean()
-        gp_loss_topo = ((grad_norm_topo - 1.0) ** 2).mean()
-        gp_loss = gp_loss_vis * VISION_WEIGHT + gp_loss_topo * TOPO_WEIGHT
+        gp_loss = ((grad_norm - 1.0) ** 2).mean()
         # print(grad_norm_topo.mean().item(), grad_norm_vis.mean().item())
 
         return gp_loss
@@ -296,10 +298,8 @@ class WGANGinkaLoss:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """ 判别器损失函数 """
         fake_data = F.softmax(fake_data, dim=1)
-        real_graph = batch_convert_soft_map_to_graph(real_data)
-        fake_graph = batch_convert_soft_map_to_graph(fake_data)
-        real_scores, _, _ = critic(real_data, real_graph, stage, tag_cond, val_cond)
-        fake_scores, _, _ = critic(fake_data, fake_graph, stage, tag_cond, val_cond)
+        real_scores = critic(real_data, stage, tag_cond, val_cond)
+        fake_scores = critic(fake_data, stage, tag_cond, val_cond)
         
         # Wasserstein 距离
         d_loss = fake_scores.mean() - real_scores.mean()
@@ -312,10 +312,9 @@ class WGANGinkaLoss:
     def generator_loss(self, critic, stage, mask_ratio, real, fake: torch.Tensor, input, tag_cond, val_cond) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """ 生成器损失函数 """
         probs_fake = F.softmax(fake, dim=1)
-        fake_graph = batch_convert_soft_map_to_graph(probs_fake)
         
-        fake_scores, _, _ = critic(probs_fake, fake_graph, stage, tag_cond, val_cond)
-        minamo_loss = -torch.mean(fake_scores)
+        fake_scores = critic(probs_fake, stage, tag_cond, val_cond)
+        minamo_loss = -torch.mean(fake_scores) + modifiable_penalty_loss(probs_fake, input, STAGE_CHANGEABLE[stage])
         ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio) # 蒙版越大，交叉熵损失权重越小
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_CHANGEABLE[stage])
         constraint_loss = inner_constraint_loss(probs_fake)
@@ -343,9 +342,8 @@ class WGANGinkaLoss:
     
     def generator_loss_total(self, critic, stage, fake, tag_cond, val_cond) -> torch.Tensor:
         probs_fake = F.softmax(fake, dim=1)
-        fake_graph = batch_convert_soft_map_to_graph(probs_fake)
         
-        fake_scores, _, _ = critic(probs_fake, fake_graph, stage, tag_cond, val_cond)
+        fake_scores = critic(probs_fake, stage, tag_cond, val_cond)
         minamo_loss = -torch.mean(fake_scores)
         illegal_loss = illegal_penalty_loss(probs_fake, STAGE_ALLOWED[stage])
         constraint_loss = inner_constraint_loss(probs_fake)
@@ -370,10 +368,9 @@ class WGANGinkaLoss:
     
     def generator_loss_total_with_input(self, critic, stage, fake, input, tag_cond, val_cond) -> torch.Tensor:
         probs_fake = F.softmax(fake, dim=1)
-        fake_graph = batch_convert_soft_map_to_graph(probs_fake)
         
-        fake_scores, _, _ = critic(probs_fake, fake_graph, stage, tag_cond, val_cond)
-        minamo_loss = -torch.mean(fake_scores)
+        fake_scores = critic(probs_fake, stage, tag_cond, val_cond)
+        minamo_loss = -torch.mean(fake_scores) + modifiable_penalty_loss(probs_fake, input, STAGE_CHANGEABLE[stage])
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_CHANGEABLE[stage])
         constraint_loss = inner_constraint_loss(probs_fake)
         density_loss = compute_multi_density_loss(probs_fake, val_cond, DENSITY_STAGE[stage])
@@ -395,13 +392,15 @@ class WGANGinkaLoss:
             
         return sum(losses)
 
-    def generator_input_head_loss(self, probs: torch.Tensor) -> torch.Tensor:
+    def generator_input_head_loss(self, critic, map: torch.Tensor, tag_cond, val_cond) -> torch.Tensor:
+        probs = F.softmax(map, dim=1)
+        head_scores = critic(probs, 0, tag_cond, val_cond)
         probs_a, probs_b = probs.chunk(2, dim=0)
         
         losses = [
+            torch.mean(head_scores),
             input_head_illegal_loss(probs),
-            input_head_wall_loss(probs),
-            -js_divergence(probs_a, probs_b, softmax=False) * 0.3
+            -js_divergence(probs_a, probs_b, softmax=False) * 0.1
         ]
         
         return sum(losses)

@@ -19,11 +19,11 @@ class DoubleConvBlock(nn.Module):
         self.cnn = nn.Sequential(
             nn.Conv2d(feats[0], feats[1], 3, padding=1, padding_mode='replicate'),
             nn.InstanceNorm2d(feats[1]),
-            nn.ELU(),
+            nn.GELU(),
             
             nn.Conv2d(feats[1], feats[2], 3, padding=1, padding_mode='replicate'),
             nn.InstanceNorm2d(feats[2]),
-            nn.ELU(),
+            nn.GELU(),
         )
         
     def forward(self, x):
@@ -57,11 +57,11 @@ class GCNBlock(nn.Module):
 
         # GCN forward
         x = self.conv1(x, edge_index)
-        x = F.elu(self.norm1(x))
+        x = F.gelu(self.norm1(x))
         x = self.conv2(x, edge_index)
-        x = F.elu(self.norm2(x))
+        x = F.gelu(self.norm2(x))
         x = self.conv3(x, edge_index)
-        x = F.elu(self.norm3(x))
+        x = F.gelu(self.norm3(x))
 
         # Reshape back to [B, C, H, W]
         x = x.view(B, H, W, -1).permute(0, 3, 1, 2)
@@ -92,9 +92,9 @@ class TransformerGCNBlock(nn.Module):
 
         # GCN forward
         x = self.conv1(x, edge_index)
-        x = F.elu(self.norm1(x))
+        x = F.gelu(self.norm1(x))
         x = self.conv2(x, edge_index)
-        x = F.elu(self.norm2(x))
+        x = F.gelu(self.norm2(x))
 
         # Reshape back to [B, C, H, W]
         x = x.view(B, H, W, -1).permute(0, 3, 1, 2)
@@ -104,8 +104,8 @@ class ConvFusionModule(nn.Module):
     def __init__(self, in_ch, hidden_ch, out_ch, w: int, h: int):
         super().__init__()
         self.cnn = DoubleConvBlock([in_ch, hidden_ch, in_ch])
-        self.gcn = GCNBlock(in_ch, hidden_ch, in_ch, w, h)
-        self.fusion = DoubleConvBlock([in_ch*2, hidden_ch*2, out_ch])
+        self.gcn = TransformerGCNBlock(in_ch, hidden_ch, in_ch, w, h)
+        self.fusion = DoubleConvBlock([in_ch*2, hidden_ch, out_ch])
         
     def forward(self, x):
         x1 = self.cnn(x)
@@ -120,11 +120,11 @@ class DoubleFCModule(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ELU(),
+            nn.GELU(),
             
             nn.Linear(hidden_dim, out_dim),
             nn.LayerNorm(out_dim),
-            nn.ELU()
+            nn.GELU()
         )
         
     def forward(self, x):
