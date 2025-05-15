@@ -155,7 +155,7 @@ def input_head_illegal_loss(input_map, allowed_classes=[0, 1, 2]):
     C = input_map.shape[1]
     unallowed = get_not_allowed(allowed_classes, include_illegal=True)
     illegal = input_map[:, unallowed, :, :]
-    penalty = torch.sum(illegal)
+    penalty = F.l1_loss(illegal, torch.zeros_like(illegal, device=illegal.device))
 
     return penalty
 
@@ -254,7 +254,7 @@ def illegal_penalty_loss(pred: torch.Tensor, legal_classes: list[int]):
     return penalty
 
 class WGANGinkaLoss:
-    def __init__(self, lambda_gp=100, weight=[1, 0.4, 50, 0.2, 0.2, 0.05, 0.4]):
+    def __init__(self, lambda_gp=100, weight=[1, 0.4, 20, 0.2, 0.2, 0.05, 0.4]):
         # weight: 
         # 1. 判别器损失及图块维持损失（可修改部分的已有内容不可修改）
         # 2. CE 损失
@@ -335,16 +335,14 @@ class WGANGinkaLoss:
             # 第一个阶段检查入口存在性
             entrance_loss = entrance_constraint_loss(probs_fake)
             losses.append(entrance_loss * self.weight[4])
-        
-        # print(-js_divergence(fake_a, fake_b).item())
-        
-        return sum(losses), minamo_loss, ce_loss, immutable_loss
+                    
+        return sum(losses), ce_loss
     
     def generator_loss_total(self, critic, stage, fake, tag_cond, val_cond) -> torch.Tensor:
         probs_fake = F.softmax(fake, dim=1)
         
         fake_scores = critic(probs_fake, stage, tag_cond, val_cond)
-        minamo_loss = -torch.mean(fake_scores)
+        minamo_loss = -torch.mean(fake_scores) + modifiable_penalty_loss(probs_fake, input, STAGE_CHANGEABLE[stage])
         illegal_loss = illegal_penalty_loss(probs_fake, STAGE_ALLOWED[stage])
         constraint_loss = inner_constraint_loss(probs_fake)
         density_loss = compute_multi_density_loss(probs_fake, val_cond, DENSITY_STAGE[stage])
@@ -392,14 +390,13 @@ class WGANGinkaLoss:
             
         return sum(losses)
 
-    def generator_input_head_loss(self, critic, map: torch.Tensor, tag_cond, val_cond) -> torch.Tensor:
-        probs = F.softmax(map, dim=1)
-        head_scores = critic(probs, 0, tag_cond, val_cond)
+    def generator_input_head_loss(self, critic, probs: torch.Tensor, tag_cond, val_cond) -> torch.Tensor:
+        head_scores = -torch.mean(critic(probs, 0, tag_cond, val_cond))
         probs_a, probs_b = probs.chunk(2, dim=0)
         
         losses = [
-            torch.mean(head_scores),
-            input_head_illegal_loss(probs),
+            head_scores,
+            input_head_illegal_loss(probs) * 50,
             -js_divergence(probs_a, probs_b, softmax=False) * 0.1
         ]
         

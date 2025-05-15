@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,18 +21,17 @@ class GinkaModel(nn.Module):
         self.unet = GinkaUNet(64, base_ch, base_ch)
         self.output = GinkaOutput(base_ch, out_ch, (13, 13))
         
-    def forward(self, x, stage, tag_cond, val_cond, random=False):
+    def forward(self, x, stage, tag_cond, val_cond):
         B, D = tag_cond.shape
         stage_tensor = torch.Tensor([stage]).expand(B, 1).to(x.device)
         cond = self.cond(tag_cond, val_cond, stage_tensor)
-        if random:
-            x_in = F.softmax(self.head(x, cond), dim=1)
+        if stage == 0:
+            x = self.head(x, cond)
         else:
-            x_in = x
-        x = self.input(x_in, cond)
-        x = self.unet(x, cond)
-        x = self.output(x, stage, cond)
-        return x, x_in
+            x = self.input(x, cond)
+            x = self.unet(x, cond)
+            x = self.output(x, stage, cond)
+        return x
     
 # 检查显存占用
 if __name__ == "__main__":
@@ -45,12 +45,18 @@ if __name__ == "__main__":
     print_memory("初始化后")
     
     # 前向传播
-    output, _ = model(input, 1, tag, val, True)
+    start = time.perf_counter()
+    fake0 = model(input, 0, tag, val)
+    fake1 = model(F.softmax(fake0, dim=1), 1, tag, val)
+    fake2 = model(F.softmax(fake1, dim=1), 1, tag, val)
+    fake3 = model(F.softmax(fake2, dim=1), 1, tag, val)
+    end = time.perf_counter()
     
     print_memory("前向传播后")
     
+    print(f"推理耗时: {end - start}")
     print(f"输入形状: feat={input.shape}")
-    print(f"输出形状: output={output.shape}")
+    print(f"输出形状: output={fake3.shape}")
     print(f"Random parameters: {sum(p.numel() for p in model.head.parameters())}")
     print(f"Cond parameters: {sum(p.numel() for p in model.cond.parameters())}")
     print(f"Input parameters: {sum(p.numel() for p in model.input.parameters())}")

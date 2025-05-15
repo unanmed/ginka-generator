@@ -239,20 +239,20 @@ class MinamoModel2(nn.Module):
         self.head2 = MinamoHead2(256, 256)
         self.head3 = MinamoHead2(256, 256)
         
-        self.inject1 = ConditionInjector(256, 128)
-        self.inject2 = ConditionInjector(256, 256)
-        self.inject3 = ConditionInjector(256, 256)
+        # self.inject1 = ConditionInjector(256, 128)
+        # self.inject2 = ConditionInjector(256, 256)
+        # self.inject3 = ConditionInjector(256, 256)
         
     def forward(self, x, stage, tag_cond, val_cond):
         B, D = tag_cond.shape
         stage_tensor = torch.Tensor([stage]).expand(B, 1).to(x.device)
         cond = self.cond(tag_cond, val_cond, stage_tensor)
         x = self.conv1(x)
-        x = self.inject1(x, cond)
+        # x = self.inject1(x, cond)
         x = self.conv2(x)
-        x = self.inject2(x, cond)
+        # x = self.inject2(x, cond)
         x = self.conv3(x)
-        x = self.inject3(x, cond)
+        # x = self.inject3(x, cond)
         
         if stage == 0:
             score = self.head0(x, cond)

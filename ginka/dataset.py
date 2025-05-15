@@ -1,4 +1,5 @@
 import json
+import math
 import random
 import torch
 import torch.nn.functional as F
@@ -72,7 +73,33 @@ def apply_curriculum_mask(
             masked_maps[0, selected[:, 0], selected[:, 1]] = 1  # 置为“空地”
 
     return removed_maps, masked_maps
+
+def apply_curriculum_wall_mask(
+    maps: torch.Tensor,                    # [C, H, W]
+    mask_classes: List[int],               # 要遮挡的类别索引
+    remove_classes: List[int],             # 要移除的类别索引
+    mask_ratio: float                      # 遮挡比例 0~1
+) -> torch.Tensor:
+    C, H, W = maps.shape
+    masked_maps = maps.clone()
+
+    # Step 1: 移除不需要的类别（全设为 0 类）
+    if remove_classes:
+        remove_mask = masked_maps[remove_classes, :, :].sum(dim=0, keepdim=True) > 0
+        masked_maps[:, :, :][remove_mask.expand(C, -1, -1)] = 0
+        masked_maps[0][remove_mask[0, :, :]] = 1  # 设置为“空地”
         
+    removed_maps = masked_maps.clone()
+    
+    area = H * W * mask_ratio
+    l = math.ceil(math.sqrt(area))
+    nx = random.randint(0, W - l)
+    ny = random.randint(0, H - l)
+    masked_maps[mask_classes, nx:nx+l, ny:ny+l] = 0
+    masked_maps[0, nx:nx+l, ny:ny+l] = 1
+    
+    return removed_maps, masked_maps
+
 class GinkaWGANDataset(Dataset):
     def __init__(self, data_path: str, device):
         self.data = load_data(data_path)  # 自定义数据加载函数
@@ -87,11 +114,14 @@ class GinkaWGANDataset(Dataset):
     
     def handle_stage1(self, target, tag_cond, val_cond):
         # 课程学习第一阶段，蒙版填充
-        removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, self.mask_ratio1)
+        removed1, masked1 = apply_curriculum_wall_mask(target, STAGE1_MASK, STAGE1_REMOVE, self.mask_ratio1)
         removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, self.mask_ratio2)
         removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, self.mask_ratio3)
+        rand = torch.rand(32, 32, 32, device=target.device)
         
         return {
+            "rand": rand,
+            "real0": removed1,
             "real1": removed1,
             "masked1": masked1,
             "real2": removed2,
@@ -104,12 +134,15 @@ class GinkaWGANDataset(Dataset):
     
     def handle_stage2(self, target, tag_cond, val_cond):
         # 课程学习第二阶段，完全随机蒙版
-        removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
+        removed1, masked1 = apply_curriculum_wall_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
         # 后面两个阶段由于会保留一些类别，所以完全随机遮挡即可
         removed2, masked2 = apply_curriculum_mask(target, STAGE2_MASK, STAGE2_REMOVE, random.uniform(0.1, 1))
         removed3, masked3 = apply_curriculum_mask(target, STAGE3_MASK, STAGE3_REMOVE, random.uniform(0.1, 1))
+        rand = torch.rand(32, 32, 32, device=target.device)
             
         return {
+            "rand": rand,
+            "real0": removed1,
             "real1": removed1,
             "masked1": masked1,
             "real2": removed2,
@@ -122,11 +155,14 @@ class GinkaWGANDataset(Dataset):
     
     def handle_stage3(self, target, tag_cond, val_cond):
         # 第三阶段，联合生成，输入随机蒙版
-        removed1, masked1 = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
+        removed1, masked1 = apply_curriculum_wall_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
         removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
         removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
+        rand = torch.rand(32, 32, 32, device=target.device)
         
         return {
+            "rand": rand,
+            "real0": removed1,
             "real1": removed1,
             "masked1": masked1,
             "real2": removed2,
@@ -142,14 +178,15 @@ class GinkaWGANDataset(Dataset):
         removed1 = apply_curriculum_remove(target, STAGE1_REMOVE)
         removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
         removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
-        _, masked = apply_curriculum_mask(target, STAGE1_MASK, STAGE1_REMOVE, 0.5)
         rand = torch.rand(32, 32, 32, device=target.device)
         
         return {
+            "rand": rand,
+            "real0": removed1,
             "real1": removed1,
             "masked1": rand,
             "real2": removed2,
-            "masked2": masked,
+            "masked2": torch.zeros_like(target),
             "real3": removed3,
             "masked3": torch.zeros_like(target),
             "tag_cond": tag_cond,
