@@ -92,7 +92,7 @@ def apply_curriculum_wall_mask(
     removed_maps = masked_maps.clone()
     
     area = H * W * mask_ratio
-    l = math.ceil(math.sqrt(area))
+    l = math.floor(math.sqrt(area))
     nx = random.randint(0, W - l)
     ny = random.randint(0, H - l)
     masked_maps[mask_classes, nx:nx+l, ny:ny+l] = 0
@@ -155,7 +155,7 @@ class GinkaWGANDataset(Dataset):
     
     def handle_stage3(self, target, tag_cond, val_cond):
         # 第三阶段，联合生成，输入随机蒙版
-        removed1, masked1 = apply_curriculum_wall_mask(target, STAGE1_MASK, STAGE1_REMOVE, random.uniform(0.1, 0.9))
+        removed1 = apply_curriculum_remove(target, STAGE1_REMOVE)
         removed2 = apply_curriculum_remove(target, STAGE2_REMOVE)
         removed3 = apply_curriculum_remove(target, STAGE3_REMOVE)
         rand = torch.rand(32, 32, 32, device=target.device)
@@ -164,7 +164,7 @@ class GinkaWGANDataset(Dataset):
             "rand": rand,
             "real0": removed1,
             "real1": removed1,
-            "masked1": masked1,
+            "masked1": removed1,
             "real2": removed2,
             "masked2": torch.zeros_like(target),
             "real3": removed3,

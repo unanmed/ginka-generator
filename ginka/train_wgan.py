@@ -108,7 +108,7 @@ def train():
     g_steps = 1
     # 训练阶段
     train_stage = 1
-    mask_ratio = 0.2 # 蒙版区域大小，每次增加 0.1，到达 0.9 之后进入阶段 2 的训练
+    mask_ratio = 0.2 # 蒙版区域大小
     stage_epoch = 0 # 记录当前阶段的 epoch 数，用于控制训练过程
     total_epoch = 0
     
@@ -123,8 +123,8 @@ def train():
     optimizer_ginka = optim.Adam(ginka.parameters(), lr=1e-4, betas=(0.0, 0.9))
     optimizer_minamo = optim.Adam(minamo.parameters(), lr=1e-4, betas=(0.0, 0.9))
     
-    # scheduler_ginka = optim.lr_scheduler.CosineAnnealingLR(optimizer_ginka, T_max=args.epochs)
-    # scheduler_minamo = optim.lr_scheduler.CosineAnnealingLR(optimizer_minamo, T_max=args.epochs)
+    scheduler_ginka = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_ginka, T_0=100, T_mult=1)
+    scheduler_minamo = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_minamo, T_0=100, T_mult=1)
     
     criterion = WGANGinkaLoss()
     
@@ -171,6 +171,7 @@ def train():
     if args.tuning:
         train_stage = 1
         curr_epoch = curr_epoch // 4
+        first_curr = first_curr // 4
         stage_epoch = 0
         mask_ratio = 0.2
         
@@ -183,8 +184,6 @@ def train():
     dataset_val.mask_ratio1 = mask_ratio
     dataset_val.mask_ratio2 = mask_ratio
     dataset_val.mask_ratio3 = mask_ratio
-    
-    low_loss_epochs = 0
         
     for epoch in tqdm(range(args.epochs), desc="WGAN Training", disable=disable_tqdm):
         loss_total_minamo = torch.Tensor([0]).to(device)
@@ -265,7 +264,7 @@ def train():
                     loss_g3 = criterion.generator_loss_total_with_input(minamo, 3, fake3, fake2, tag_cond, val_cond)
                     
                     loss_g = (loss_g1 * 3.0 + loss_g2 + loss_g3) / 5.0
-                        
+                    
                 if train_stage < 4:
                     fake0 = F.softmax(ginka(rand, 0, tag_cond, val_cond), dim=1)
                     
@@ -282,9 +281,10 @@ def train():
         avg_dis = dis_total.item() / len(dataloader) / c_steps
         tqdm.write(
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
-            f"Epoch: {epoch + 1} | S: {train_stage} | W: {avg_dis:.6f} | " +
+            f"E: {epoch + 1} | S: {train_stage} | W: {avg_dis:.6f} | " +
             f"G: {avg_loss_ginka:.6f} | D: {avg_loss_minamo:.6f} | " +
-            f"CE: {avg_loss_ce:.6f} | M: {mask_ratio:.1f}"
+            f"CE: {avg_loss_ce:.6f} | M: {mask_ratio:.1f} | " +
+            f"LR: {optimizer_ginka.param_groups[0]['lr']:.6f}"
         )
         
         # 每若干轮输出一次图片，并保存检查点
@@ -364,46 +364,34 @@ def train():
         # 训练流程控制
         
         if train_stage >= 2:
-            if (epoch + 1) % 10 == 1:
+            # train_stage = 4
+            if (epoch + 1) % 100 == 5:
                 train_stage = 3
-            elif (epoch + 1) % 10 == 3:
+            elif (epoch + 1) % 100 == 20:
                 train_stage = 4
-            elif (epoch + 1) % 10 == 0:
+            elif (epoch + 1) % 100 == 0:
                 train_stage = 2
         
         if train_stage == 1:
             if (mask_ratio < 0.3 and stage_epoch >= first_curr) or \
                 (mask_ratio > 0.3 and stage_epoch >= curr_epoch):
-                if mask_ratio >= 0.9:
-                    train_stage = 2
                 mask_ratio += 0.2
-                mask_ratio = min(mask_ratio, 0.9)
-                low_loss_epochs = 0
+                mask_ratio = min(mask_ratio, 0.8)
+
                 stage_epoch = 0
+                if mask_ratio >= 0.8:
+                    train_stage = 2
         
         stage_epoch += 1
         total_epoch += 1
-        
-        # scheduler_ginka.step()
-        # scheduler_minamo.step()
-        
-        # if avg_dis < 0:
-        #     g_steps = max(int(-avg_dis * 5), 1)
-        # else:
-        #     g_steps = 1
-            
-        # if avg_loss_ginka > 0 and epoch > 20 and not args.resume:
-        #     g_steps += int(min(avg_loss_ginka * 5, 50))
-            
-        # if avg_loss_minamo > 0:
-        #     c_steps = int(min(5 + avg_loss_minamo * 5, 15))
-        # else:
-        #     c_steps = 5
 
         dataset.train_stage = train_stage
         dataset_val.train_stage = train_stage
         dataset.mask_ratio1 = dataset.mask_ratio2 = dataset.mask_ratio3 = mask_ratio
         dataset_val.mask_ratio1 = dataset_val.mask_ratio2 = dataset_val.mask_ratio3 = mask_ratio
+        
+        scheduler_ginka.step()
+        scheduler_minamo.step()
     
     print("Train ended.")
     torch.save({

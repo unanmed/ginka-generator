@@ -50,9 +50,9 @@ DENSITY_WEIGHTS = [
 
 DENSITY_STAGE = [
     [],
-    [1, 2, 10],
-    [1, 2, 3, 4, 10],
-    list(range(0, 11))
+    [1, 2],
+    [1, 2, 3, 4],
+    list(range(0, 10))
 ]
 
 def get_not_allowed(classes: list[int], include_illegal=False):
@@ -232,7 +232,7 @@ def immutable_penalty_loss(
         target_mask = F.one_hot(target_mask, num_classes=len(not_allowed)).permute(0, 3, 1, 2).float()
 
     # 差异区域（模型试图改变的地方）
-    penalty = F.cross_entropy(input_mask, target_mask)
+    penalty = torch.clamp(F.cross_entropy(input_mask, target_mask) - 0.2, min=0)
 
     return penalty
 
@@ -314,7 +314,7 @@ class WGANGinkaLoss:
         probs_fake = F.softmax(fake, dim=1)
         
         fake_scores = critic(probs_fake, stage, tag_cond, val_cond)
-        minamo_loss = -torch.mean(fake_scores) + modifiable_penalty_loss(probs_fake, input, STAGE_CHANGEABLE[stage])
+        minamo_loss = -torch.mean(fake_scores)
         ce_loss = F.cross_entropy(fake, real) * (1 - mask_ratio) # 蒙版越大，交叉熵损失权重越小
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_CHANGEABLE[stage])
         constraint_loss = inner_constraint_loss(probs_fake)
@@ -342,7 +342,7 @@ class WGANGinkaLoss:
         probs_fake = F.softmax(fake, dim=1)
         
         fake_scores = critic(probs_fake, stage, tag_cond, val_cond)
-        minamo_loss = -torch.mean(fake_scores) + modifiable_penalty_loss(probs_fake, input, STAGE_CHANGEABLE[stage])
+        minamo_loss = -torch.mean(fake_scores)
         illegal_loss = illegal_penalty_loss(probs_fake, STAGE_ALLOWED[stage])
         constraint_loss = inner_constraint_loss(probs_fake)
         density_loss = compute_multi_density_loss(probs_fake, val_cond, DENSITY_STAGE[stage])
@@ -368,7 +368,7 @@ class WGANGinkaLoss:
         probs_fake = F.softmax(fake, dim=1)
         
         fake_scores = critic(probs_fake, stage, tag_cond, val_cond)
-        minamo_loss = -torch.mean(fake_scores) + modifiable_penalty_loss(probs_fake, input, STAGE_CHANGEABLE[stage])
+        minamo_loss = -torch.mean(fake_scores)
         immutable_loss = immutable_penalty_loss(fake, input, STAGE_CHANGEABLE[stage])
         constraint_loss = inner_constraint_loss(probs_fake)
         density_loss = compute_multi_density_loss(probs_fake, val_cond, DENSITY_STAGE[stage])
@@ -397,7 +397,7 @@ class WGANGinkaLoss:
         losses = [
             head_scores,
             input_head_illegal_loss(probs) * 50,
-            -js_divergence(probs_a, probs_b, softmax=False) * 0.1
+            -js_divergence(probs_a, probs_b, softmax=False) * 0.5
         ]
         
         return sum(losses)

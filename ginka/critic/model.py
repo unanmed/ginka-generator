@@ -230,8 +230,8 @@ class MinamoModel2(nn.Module):
         super().__init__()
         self.cond = ConditionEncoder(64, 16, 256, 256)
         
-        self.conv1 = ConvFusionModule(tile_types, 256, 128, 13, 13)
-        self.conv2 = ConvFusionModule(128, 256, 256, 13, 13)
+        self.conv1 = ConvFusionModule(tile_types, 256, 256, 13, 13)
+        self.conv2 = ConvFusionModule(256, 512, 256, 13, 13)
         self.conv3 = ConvFusionModule(256, 512, 256, 13, 13)
         
         self.head0 = MinamoHead2(256, 256) # 随机头的判别头
@@ -239,9 +239,9 @@ class MinamoModel2(nn.Module):
         self.head2 = MinamoHead2(256, 256)
         self.head3 = MinamoHead2(256, 256)
         
-        # self.inject1 = ConditionInjector(256, 128)
+        # self.inject1 = ConditionInjector(256, 256)
         # self.inject2 = ConditionInjector(256, 256)
-        # self.inject3 = ConditionInjector(256, 256)
+        self.inject3 = ConditionInjector(256, 256)
         
     def forward(self, x, stage, tag_cond, val_cond):
         B, D = tag_cond.shape
@@ -252,7 +252,7 @@ class MinamoModel2(nn.Module):
         x = self.conv2(x)
         # x = self.inject2(x, cond)
         x = self.conv3(x)
-        # x = self.inject3(x, cond)
+        x = self.inject3(x, cond)
         
         if stage == 0:
             score = self.head0(x, cond)
