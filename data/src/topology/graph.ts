@@ -3,7 +3,8 @@ import {
     GinkaGraph,
     BranchNode,
     GinkaTopologicalGraphs,
-    ResourceNode
+    ResourceNode,
+    NodeType
 } from './interface';
 
 export const tileType = new Set(
@@ -76,7 +77,7 @@ function buildGraphFromEntrance(
         const ny = Math.floor(v / width);
         if (!graph.get(v)) {
             graph.set(v, {
-                type: 'branch',
+                type: NodeType.Branch,
                 neighbor: new Set(),
                 tile: map[ny][nx]
             });
@@ -115,7 +116,7 @@ function buildGraphFromEntrance(
             const tile = map[ny][nx];
             if (tile === 0) return;
             const node: ResourceNode = {
-                type: 'resource',
+                type: NodeType.Resource,
                 resourceType: tile,
                 neighbor: v.neighbor,
                 resourceArea: v
@@ -145,7 +146,7 @@ function findResourceNodes(map: number[][]) {
             const queue: [number, number][] = [];
             queue.push([nx, ny]);
             const area: ResourceArea = {
-                type: 'resource',
+                type: NodeType.Resource,
                 resources: new Map([[tile, 1]]),
                 members: new Set([index]),
                 neighbor: new Set()

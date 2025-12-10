@@ -9,3 +9,5 @@ datasets
 *.log
 app/model/*
 !app/model/.gitkeep
+map_images
+data/result.json

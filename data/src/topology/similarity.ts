@@ -1,5 +1,5 @@
 import { cosineSimilarity } from 'src/utils';
-import { GinkaGraph, GinkaTopologicalGraphs } from './interface';
+import { GinkaGraph, GinkaTopologicalGraphs, NodeType } from './interface';
 
 interface WLNode {
     originalPos: number;
@@ -16,7 +16,7 @@ function encodeNodeLabels(graph: GinkaGraph) {
         let label: string;
 
         // 编码为唯一哈希值（用字符串就行，V8 会自动帮你算哈希）
-        if (node.type === 'branch') {
+        if (node.type === NodeType.Branch) {
             label = `B:${node.tile}`;
         } else {
             label = `R:${node.resourceType}`;
@@ -59,7 +59,7 @@ function weisfeilerLehmanIteration(
             const neighborLabels = node.neighbors
                 .map(n => n.currentLabel)
                 .sort();
-            
+
             const compositeLabel = `${node.currentLabel}|${neighborLabels.join(
                 ','
             )}`.slice(0, 8192);
