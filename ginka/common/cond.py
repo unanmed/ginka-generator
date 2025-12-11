@@ -25,10 +25,10 @@ class ConditionEncoder(nn.Module):
         )
         
     def forward(self, tag, val, stage):
-        tag = self.tag_embed(tag)
+        # tag = self.tag_embed(tag)
         val = self.val_embed(val)
         stage = self.stage_embed(stage)
-        feat = torch.stack([tag, val, stage], dim=1)
+        feat = torch.stack([val, stage], dim=1)
         feat = self.encoder(feat)
         feat = torch.mean(feat, dim=1)
         feat = self.fusion(feat)
