@@ -420,6 +420,19 @@ export function convertTowerMap(
         }
     });
 
+    for (let nx = 0; nx < width; nx++) {
+        for (let ny = 0; ny < height; ny++) {
+            if (
+                typeof converted[ny][nx] !== 'number' ||
+                isNaN(converted[ny][nx]) ||
+                !isFinite(converted[ny][nx]) ||
+                converted[ny][nx] < 0
+            ) {
+                converted[ny][nx] = 0;
+            }
+        }
+    }
+
     return {
         map: converted,
         hasCannotInOut
