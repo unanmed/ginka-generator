@@ -217,3 +217,27 @@ class GinkaWGANDataset(Dataset):
 
         raise RuntimeError(f"Invalid train stage: {self.train_stage}")
         
+class GinkaRNNDataset(Dataset):
+    def __init__(self, data_path: str, device):
+        self.data = load_data(data_path)  # 自定义数据加载函数
+        self.device = device
+        
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        
+        target = torch.LongTensor(item['map']) # [H, W]
+        H, W = target.shape
+        target = target.reshape(H * W) # [T]
+        tag_cond = torch.FloatTensor(item['tag'])
+        val_cond = torch.FloatTensor(item['val'])
+        val_cond[9] = val_cond[9] / H / W
+        val_cond[10] = val_cond[10] / H / W
+
+        return {
+            "tag_cond": tag_cond,
+            "val_cond": val_cond,
+            "target_map": target
+        }

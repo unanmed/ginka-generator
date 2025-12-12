@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from .common import DoubleFCModule
 
 class ConditionEncoder(nn.Module):
-    def __init__(self, tag_dim, val_dim, hidden_dim, out_dim):
+    def __init__(self, tag_dim=64, val_dim=16, hidden_dim=256, out_dim=256):
         super().__init__()
         self.tag_embed = DoubleFCModule(tag_dim, hidden_dim, hidden_dim)
         self.val_embed = DoubleFCModule(val_dim, hidden_dim, hidden_dim)

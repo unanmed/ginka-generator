@@ -401,3 +401,10 @@ class WGANGinkaLoss:
         ]
         
         return sum(losses)
+
+class RNNGinkaLoss:
+    def __init__(self):
+        pass
+    
+    def rnn_loss(self, fake, target):
+        return F.cross_entropy(fake, target)
