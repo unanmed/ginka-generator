@@ -55,6 +55,7 @@ BATCH_SIZE = 8
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 os.makedirs("result", exist_ok=True)
 os.makedirs("result/rnn", exist_ok=True)
+os.makedirs("result/ginka_rnn_img", exist_ok=True)
 
 disable_tqdm = not sys.stdout.isatty()
 
@@ -75,16 +76,16 @@ def train():
     
     args = parse_arguments()
     
-    cond_inj = ConditionEncoder()
-    ginka_rnn = GinkaRNN()
+    cond_inj = ConditionEncoder().to(device)
+    ginka_rnn = GinkaRNN().to(device)
     
     dataset = GinkaRNNDataset(args.train, device)
     dataset_val = GinkaRNNDataset(args.validate, device)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE)
     
+    optimizer_ginka = optim.Adam(list(ginka_rnn.parameters()) + list(cond_inj.parameters()), lr=1e-3, betas=(0.0, 0.9))
     scheduler_ginka = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_ginka, T_0=10, T_mult=2)
-    optimizer_ginka = optim.Adam(list(ginka_rnn.parameters()) + list(cond_inj), lr=1e-3, betas=(0.0, 0.9))
 
     criterion = RNNGinkaLoss()
 
@@ -115,7 +116,9 @@ def train():
             val_cond = batch["val_cond"].to(device)
             target_map = batch["target_map"].to(device)
             
-            cond_vec = cond_inj(tag_cond, val_cond, 0)
+            B, D = val_cond.shape
+            stage = torch.Tensor([0]).expand(B, 1).to(device)
+            cond_vec = cond_inj(tag_cond, val_cond, stage)
             fake = ginka_rnn(target_map, cond_vec)
             
             loss = criterion.rnn_loss(fake, target_map)
@@ -126,18 +129,18 @@ def train():
             
             iters += 1
             
-            if iters % 100 == 0:
-                avg_loss_ginka = loss_total_ginka.item() / iters
+            # if iters % 100 == 0:
+            #     avg_loss_ginka = loss_total_ginka.item() / iters
                 
-                tqdm.write(
-                    f"[Iters {iters} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
-                    f"E: {epoch + 1} | Loss: {avg_loss_ginka:.6f} | " +
-                    f"LR: {optimizer_ginka.param_groups[0]['lr']:.6f}"
-                )
+            #     tqdm.write(
+            #         f"[Iters {iters} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
+            #         f"E: {epoch + 1} | Loss: {avg_loss_ginka:.6f} | " +
+            #         f"LR: {optimizer_ginka.param_groups[0]['lr']:.6f}"
+            #     )
                 
         avg_loss_ginka = loss_total_ginka.item() / iters
         tqdm.write(
-            f"[Iters {iters} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
+            f"[Epoch {epoch} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
             f"E: {epoch + 1} | Loss: {avg_loss_ginka:.6f} | " +
             f"LR: {optimizer_ginka.param_groups[0]['lr']:.6f}"
         )
@@ -150,31 +153,34 @@ def train():
             torch.save({
                 "model_state": ginka_rnn.state_dict(),
                 "optim_state": optimizer_ginka.state_dict(),
-            }, f"result/wgan/ginka-{epoch + 1}.pth")
+            }, f"result/rnn/ginka-{epoch + 1}.pth")
         
-        val_loss_total = torch.Tensor([0]).to(device)
-        with torch.no_grad():
-            idx = 0
-            for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
-                tag_cond = batch["tag_cond"].to(device)
-                val_cond = batch["val_cond"].to(device)
-                target_map = batch["target_map"].to(device)
-                
-                cond_vec = cond_inj(tag_cond, val_cond, 0)
-                fake = ginka_rnn(target_map, cond_vec)
-                
-                val_loss_total += criterion.rnn_loss(fake, target_map).detach()
-                
-                fake_map = torch.argmax(fake, dim=1).cpu().numpy()
-                fake_img = matrix_to_image_cv(fake_map[0], tile_dict)
-                cv2.imwrite(f"result/ginka_rnn_img/{idx}.png", fake_img)
-                
-                idx += 1
+            val_loss_total = torch.Tensor([0]).to(device)
+            with torch.no_grad():
+                idx = 0
+                for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
+                    tag_cond = batch["tag_cond"].to(device)
+                    val_cond = batch["val_cond"].to(device)
+                    target_map = batch["target_map"].to(device)
+                    
+                    B, T = val_cond.shape
+                    stage = torch.Tensor([0]).expand(B, 1).to(device)
+                    cond_vec = cond_inj(tag_cond, val_cond, stage)
+                    fake = ginka_rnn(target_map, cond_vec)
+                    
+                    val_loss_total += criterion.rnn_loss(fake, target_map).detach()
+                    
+                    B, T, C = fake.shape
+                    fake_map = torch.argmax(fake, dim=-1).reshape(B, 13, 13).cpu().numpy()
+                    fake_img = matrix_to_image_cv(fake_map[0], tile_dict)
+                    cv2.imwrite(f"result/ginka_rnn_img/{idx}.png", fake_img)
+                    
+                    idx += 1
                 
     print("Train ended.")
     torch.save({
         "model_state": ginka_rnn.state_dict(),
-    }, f"result/ginka.pth")
+    }, f"result/ginka_rnn.pth")
     
 
 if __name__ == "__main__":

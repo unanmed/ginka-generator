@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class GinkaRNN(nn.Module):
-    def __init__(self, tile_classes=32, cond_dim=256, input_dim=256, hidden_dim=512, num_layers=1):
+    def __init__(self, tile_classes=32, cond_dim=256, input_dim=256, hidden_dim=1024, num_layers=2):
         super().__init__()
         
         # 输入部分
@@ -31,34 +31,25 @@ class GinkaRNN(nn.Module):
         return logits
 
 def print_memory(tag=""):
-    print(f"{tag} | 当前显存: {torch.cuda.memory_allocated() / 1024**2:.2f} MB, 最大显存: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB")
+    print(f"{tag} | 当前显存: {torch.cuda.memory_allocated('cuda:1') / 1024**2:.2f} MB, 最大显存: {torch.cuda.max_memory_allocated('cuda:1') / 1024**2:.2f} MB")
 
 if __name__ == "__main__":
-    input = torch.rand(1, 32, 32, 32).cuda()
-    tag = torch.rand(1, 64).cuda()
-    val = torch.rand(1, 16).cuda()
+    input = torch.argmax(torch.rand(1, 32, 13 * 13).cuda(1), dim=1)
+    cond = torch.rand(1, 256).cuda(1)
     
     # 初始化模型
-    model = GinkaRNN().cuda()
+    model = GinkaRNN().cuda(1)
     
     print_memory("初始化后")
     
     # 前向传播
     start = time.perf_counter()
-    fake0 = model(input, 0, tag, val)
-    fake1 = model(F.softmax(fake0, dim=1), 1, tag, val)
-    fake2 = model(F.softmax(fake1, dim=1), 1, tag, val)
-    fake3 = model(F.softmax(fake2, dim=1), 1, tag, val)
+    fake = model(input, cond)
     end = time.perf_counter()
     
     print_memory("前向传播后")
     
     print(f"推理耗时: {end - start}")
     print(f"输入形状: feat={input.shape}")
-    print(f"输出形状: output={fake3.shape}")
-    print(f"Random parameters: {sum(p.numel() for p in model.head.parameters())}")
-    print(f"Cond parameters: {sum(p.numel() for p in model.cond.parameters())}")
-    print(f"Input parameters: {sum(p.numel() for p in model.input.parameters())}")
-    print(f"UNet parameters: {sum(p.numel() for p in model.unet.parameters())}")
-    print(f"Output parameters: {sum(p.numel() for p in model.output.parameters())}")
+    print(f"输出形状: output={fake.shape}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
