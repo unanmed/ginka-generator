@@ -138,7 +138,7 @@ class GinkaRNN(nn.Module):
         """
         hidden = self.gru(feat_fusion, hidden)
         logits = self.fc(hidden)
-        return logits, hidden
+        return F.sigmoid(logits), hidden
     
 class GinkaRNNModel(nn.Module):
     def __init__(self, device: torch.device, start_tile=31, width=13, height=13):
