@@ -114,7 +114,8 @@ def train():
             val_cond = batch["val_cond"].to(device)
             target_map = batch["target_map"].to(device)
             
-            fake_logits, fake_map = ginka_rnn(val_cond, target_map, False)
+            with torch.autograd.set_detect_anomaly(True):
+                fake_logits, fake_map = ginka_rnn(val_cond, target_map, False)
             
             loss = criterion.rnn_loss(fake_logits, target_map)
             

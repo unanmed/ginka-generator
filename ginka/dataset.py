@@ -230,7 +230,6 @@ class GinkaRNNDataset(Dataset):
         
         target = torch.LongTensor(item['map']) # [H, W]
         H, W = target.shape
-        target = target.reshape(H * W) # [T]
         tag_cond = torch.FloatTensor(item['tag'])
         val_cond = torch.FloatTensor(item['val'])
         val_cond[9] = val_cond[9] / H / W
