@@ -408,4 +408,4 @@ class RNNGinkaLoss:
     
     def rnn_loss(self, fake, target):
         target = F.one_hot(target, num_classes=32).float()
-        return F.cross_entropy(fake, target)
+        return F.cross_entropy(fake, target, label_smoothing=0.05)
