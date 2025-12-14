@@ -5,4 +5,4 @@ python3 -u -m ginka.train_wgan --resume true --epochs 300 --state_ginka "result/
 
 # rnn
 python3 -u -m ginka.train_rnn --epochs 150 --checkpoint 10 >> output_rnn.log
-python3 -u -m ginka.train_rnn --epochs 150 --checkpoint 10 --state_ginka "result/rnn/ginka-100.pth" >> output_rnn.log
+python3 -u -m ginka.train_rnn --resume true --epochs 150 --checkpoint 10 --state_ginka "result/rnn/ginka-100.pth" >> output_rnn.log
