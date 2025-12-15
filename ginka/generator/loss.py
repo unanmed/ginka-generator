@@ -408,6 +408,10 @@ class RNNGinkaLoss:
         pass
     
     def rnn_loss(self, fake, target):
+        """
+        fake: [B, C, H, W]
+        target: [B, H, W]
+        """
         weight = torch.ones(self.num_classes)
         weight[0] = 0.3
         weight[1] = 0.5
