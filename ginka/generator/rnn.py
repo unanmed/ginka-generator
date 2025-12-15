@@ -32,10 +32,12 @@ class GinkaMapPatch(nn.Module):
         
         self.patch_cnn = nn.Sequential(
             nn.Conv2d(tile_classes, 256, 3, padding=1),
+            nn.Dropout(0.2),
             nn.BatchNorm2d(256),
             nn.ReLU(),
             
             nn.Conv2d(256, 512, 3),
+            nn.Dropout(0.2),
             nn.BatchNorm2d(512),
             nn.ReLU(),
             
@@ -107,7 +109,8 @@ class GinkaInputFusion(nn.Module):
         
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=d_model, nhead=2, dim_feedforward=d_model*2, batch_first=True
+                d_model=d_model, nhead=2, dim_feedforward=d_model*2, batch_first=True,
+                dropout=0.2
             ),
             num_layers=4
         )
@@ -128,11 +131,12 @@ class GinkaInputFusion(nn.Module):
         return feat[:, 0]
 
 class GinkaRNN(nn.Module):
-    def __init__(self, tile_classes=32, input_dim=256, hidden_dim=2048):
+    def __init__(self, tile_classes=32, input_dim=256, hidden_dim=512):
         super().__init__()
         
         # GRU
         self.gru = nn.GRUCell(input_dim, hidden_dim)
+        self.drop = nn.Dropout(0.2)
         self.fc = nn.Linear(hidden_dim, tile_classes)
 
     def forward(self, feat_fusion: torch.Tensor, hidden: torch.Tensor):
@@ -140,7 +144,7 @@ class GinkaRNN(nn.Module):
         feat_fusion: [B, input_dim]
         hidden: [B, hidden_dim]
         """
-        hidden = self.gru(feat_fusion, hidden)
+        hidden = self.drop(self.gru(feat_fusion, hidden))
         logits = self.fc(hidden)
         return logits, hidden
     

@@ -84,7 +84,7 @@ def train():
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE)
     
     optimizer_ginka = optim.AdamW(ginka_rnn.parameters(), lr=1e-4, weight_decay=1e-4)
-    scheduler_ginka = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_ginka, T_0=10, T_mult=2)
+    scheduler_ginka = optim.lr_scheduler.CosineAnnealingLR(optimizer_ginka, T_max=800, eta_min=1e-6)
 
     criterion = RNNGinkaLoss()
 
