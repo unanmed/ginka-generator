@@ -205,7 +205,7 @@ class GinkaRNNModel(nn.Module):
                 map[:, y, x] = tile_id[:]
                 now_tile = tile_id if use_self else target_map[:, y, x].detach()
                 
-        return output_logits, map
+        return output_logits.permute(0, 3, 1, 2), map
 
 def print_memory(device, tag=""):
     if torch.cuda.is_available():

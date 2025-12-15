@@ -86,7 +86,7 @@ def train():
     optimizer_ginka = optim.AdamW(ginka_rnn.parameters(), lr=1e-4, weight_decay=1e-4)
     scheduler_ginka = optim.lr_scheduler.CosineAnnealingLR(optimizer_ginka, T_max=800, eta_min=1e-6)
 
-    criterion = RNNGinkaLoss()
+    criterion = RNNGinkaLoss(32)
 
     # 用于生成图片
     tile_dict = dict()
@@ -158,7 +158,6 @@ def train():
                     val_cond = batch["val_cond"].to(device)
                     target_map = batch["target_map"].to(device)
                     
-                    B, T = val_cond.shape
                     fake_logits, fake_map = ginka_rnn(val_cond, target_map, False)
 
                     val_loss_total += criterion.rnn_loss(fake_logits, target_map).detach()
