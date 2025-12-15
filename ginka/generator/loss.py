@@ -403,12 +403,12 @@ class WGANGinkaLoss:
         return sum(losses)
 
 class RNNGinkaLoss:
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, device):
         self.num_classes = num_classes
         weight = torch.ones(self.num_classes)
         weight[0] = 0.3
         weight[1] = 0.5
-        self.weight = weight
+        self.weight = weight.to(device)
         pass
     
     def rnn_loss(self, fake, target):
@@ -416,5 +416,5 @@ class RNNGinkaLoss:
         fake: [B, C, H, W]
         target: [B, H, W]
         """
-        target = F.one_hot(target, num_classes=self.num_classes).float()
+        target = F.one_hot(target, num_classes=self.num_classes).float().permute(0, 3, 1, 2)
         return F.cross_entropy(fake, target, label_smoothing=0.1, weight=self.weight)

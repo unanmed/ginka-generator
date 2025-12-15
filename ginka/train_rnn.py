@@ -86,7 +86,7 @@ def train():
     optimizer_ginka = optim.AdamW(ginka_rnn.parameters(), lr=1e-4, weight_decay=1e-4)
     scheduler_ginka = optim.lr_scheduler.CosineAnnealingLR(optimizer_ginka, T_max=800, eta_min=1e-6)
 
-    criterion = RNNGinkaLoss(32)
+    criterion = RNNGinkaLoss(32, device)
 
     # 用于生成图片
     tile_dict = dict()
