@@ -72,7 +72,7 @@ class GinkaMapPatch(nn.Module):
         mask[:, 4, 2] = 0
         mask[:, 4, 3] = 0
         mask[:, 4, 4] = 0
-        masked_result = torch.zeros([B, self.tile_classes + 1, 5, 5])
+        masked_result = torch.zeros([B, self.tile_classes + 1, 5, 5]).to(map.device)
         masked_result[:, 0:32] = F.one_hot(result, num_classes=32).permute(0, 3, 2, 1).float()
         masked_result[:, 32] = mask
         

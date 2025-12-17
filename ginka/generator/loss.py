@@ -417,4 +417,4 @@ class RNNGinkaLoss:
         target: [B, H, W]
         """
         target = F.one_hot(target, num_classes=self.num_classes).float().permute(0, 3, 1, 2)
-        return F.cross_entropy(fake, target, label_smoothing=0.1, weight=self.weight)
+        return F.cross_entropy(fake, target, label_smoothing=0.1)
