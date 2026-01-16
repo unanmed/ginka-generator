@@ -1,4 +1,5 @@
 import time
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -182,7 +183,7 @@ class GinkaRNNModel(nn.Module):
         self.feat_fusion = GinkaInputFusion()
         self.rnn = GinkaRNN(tile_classes=self.tile_classes, hidden_dim=self.rnn_hidden)
         
-    def forward(self, val_cond: torch.Tensor, target_map: torch.Tensor, use_self=False):
+    def forward(self, val_cond: torch.Tensor, target_map: torch.Tensor, use_self_probility=0):
         """
         val_cond: [B, val_dim]
         target_map: [B, H, W]
@@ -207,6 +208,7 @@ class GinkaRNNModel(nn.Module):
                 # 位置编码、图块编码、地图局部编码
                 tile_embed = self.tile_embedding(now_tile)
                 row_embed, col_embed = self.pos_embedding(x_tensor, y_tensor)
+                use_self = random.random() < use_self_probility
                 map_patch = self.map_patch(map if use_self else target_map, x, y)
                 # 编码特征融合
                 feat = self.feat_fusion(tile_embed, cond, row_embed, col_embed, map_patch)
