@@ -7,9 +7,21 @@ from ..utils import print_memory
 class EncoderEmbedding(nn.Module):
     def __init__(self, tile_classes=32, width=13, height=13, hidden_dim=128, output_dim=256):
         super().__init__()
-        self.tile_embedding = nn.Embedding(tile_classes, hidden_dim)
-        self.col_embedding = nn.Embedding(width, hidden_dim)
-        self.row_embedding = nn.Embedding(height, hidden_dim)
+        self.tile_embedding = nn.Sequential(
+            nn.Embedding(tile_classes, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU()
+        )
+        self.col_embedding = nn.Sequential(
+            nn.Embedding(width, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU()
+        )
+        self.row_embedding = nn.Sequential(
+            nn.Embedding(height, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU()
+        )
         self.fusion = nn.Linear(hidden_dim * 3, output_dim)
         
     def forward(self, tile, x, y):
@@ -43,6 +55,25 @@ class EncoderGRU(nn.Module):
         hidden = self.drop(self.gru(feat, hidden))
         logits = self.fc(hidden)
         return logits, hidden
+    
+class EncoderFusion(nn.Module):
+    def __init__(self, d_model=256):
+        super().__init__()
+        
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=d_model, dim_feedforward=d_model, nhead=2, batch_first=True
+            ),
+            num_layers=2
+        )
+        self.norm = nn.LayerNorm(d_model)
+    
+    def forward(self, logits):
+        x = self.norm(self.transformer(logits))
+        h_mean = torch.mean(x, dim=1)
+        h_max = torch.max(x, dim=1).values
+        h = torch.cat([h_mean, h_max], dim=1)
+        return h
 
 class VAEEncoder(nn.Module):
     def __init__(self, device, tile_classes=32, latent_dim=32, width=13, height=13):
@@ -54,6 +85,7 @@ class VAEEncoder(nn.Module):
         
         self.embedding = EncoderEmbedding(tile_classes, width, height, 128, 256)
         self.rnn = EncoderGRU(256, self.rnn_hidden, self.logits_dim)
+        self.fusion = EncoderFusion(256)
         self.fc_mu = nn.Linear(512, latent_dim)
         self.fc_logvar = nn.Linear(512, latent_dim)
         
@@ -79,9 +111,8 @@ class VAEEncoder(nn.Module):
             logits, h = self.rnn(embed[:, idx], hidden)
             hidden = h
             output[:, idx] = logits
-        h_mean = torch.mean(output, dim=1)
-        h_max = torch.max(output, dim=1).values
-        h = torch.cat([h_mean, h_max], dim=1)
+
+        h = self.fusion(output)
         mu = self.fc_mu(h)
         logvar = self.fc_logvar(h)
         return mu, logvar
@@ -107,4 +138,5 @@ if __name__ == "__main__":
     print(f"输出形状: mu={mu.shape}, logvar={logvar.shape}")
     print(f"Embedding parameters: {sum(p.numel() for p in model.embedding.parameters())}")
     print(f"RNN parameters: {sum(p.numel() for p in model.rnn.parameters())}")
+    print(f"Fusion parameters: {sum(p.numel() for p in model.fusion.parameters())}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")

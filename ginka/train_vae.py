@@ -124,6 +124,7 @@ def train():
             loss, reco_loss, kl_loss = criterion.vae_loss(fake_logits, target_map, mu, logvar, 0.05)
             
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(vae.parameters(), max_norm=2.0)
             optimizer_ginka.step()
             loss_total += loss.detach()
             reco_loss_total += reco_loss.detach()

@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from ..utils import print_memory
     
-class GinkaMapPatch(nn.Module):
+class DecoderMapPatch(nn.Module):
     def __init__(self, tile_classes=32, width=13, height=13):
         super().__init__()
         
@@ -64,18 +64,16 @@ class GinkaMapPatch(nn.Module):
         feat = self.fc(feat)
         return feat
     
-class GinkaTileEmbedding(nn.Module):
+class DecoderTileEmbedding(nn.Module):
     def __init__(self, tile_classes=32, embed_dim=256):
         super().__init__()
-        
         # 图块编码，上一次画的图块
-        
         self.embedding = nn.Embedding(tile_classes, embed_dim)
         
     def forward(self, tile: torch.Tensor):
         return self.embedding(tile)
     
-class GinkaPosEmbedding(nn.Module):
+class DecoderPosEmbedding(nn.Module):
     def __init__(self, width=13, height=13, embed_dim=256):
         super().__init__()
         
@@ -86,17 +84,13 @@ class GinkaPosEmbedding(nn.Module):
         
         self.row_embedding = nn.Embedding(height, embed_dim)
         self.col_embedding = nn.Embedding(width, embed_dim)
-        self.fusion = nn.Linear(embed_dim * 2, embed_dim)
         
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         row = self.row_embedding(y)
         col = self.col_embedding(x)
-        embed = torch.cat([row, col], dim=2)
-        fused = self.fusion(embed)
-        
-        return fused
+        return row, col
     
-class GinkaInputFusion(nn.Module):
+class DecoderInputFusion(nn.Module):
     def __init__(self, d_model=256):
         super().__init__()
         
@@ -107,24 +101,31 @@ class GinkaInputFusion(nn.Module):
                 d_model=d_model, nhead=2, dim_feedforward=d_model, batch_first=True,
                 dropout=0.2
             ),
-            num_layers=3
+            num_layers=2
         )
+        self.norm = nn.LayerNorm(d_model)
+        self.fusion = nn.Linear(d_model * 2, d_model)
         
     def forward(
         self, tile_embed: torch.Tensor, cond_vec: torch.Tensor, 
-        pos_embed: torch.Tensor, patch_vec: torch.Tensor
+        col_embed: torch.Tensor, row_embed: torch.Tensor, patch_vec: torch.Tensor
     ):
         """
         tile_embed: [B, 256]
         cond_vec: [B, 256]
-        pos_embed: [B, 256]
+        col_embed: [B, 256]
+        row_embed: [B, 256]
         patch_vec: [B, 256]
         """
-        vec = torch.stack([tile_embed, cond_vec, pos_embed, patch_vec], dim=1)
-        feat = self.transformer(vec)
-        return feat[:, 0]
+        vec = torch.stack([tile_embed, cond_vec, col_embed, row_embed, patch_vec], dim=1)
+        feat = self.norm(self.transformer(vec))
+        mean = torch.mean(feat, dim=1)
+        max = torch.max(feat, dim=1).values
+        hidden = torch.cat([mean, max], dim=1)
+        fused = self.fusion(hidden)
+        return fused
 
-class GinkaRNN(nn.Module):
+class DecoderRNN(nn.Module):
     def __init__(self, tile_classes=32, input_dim=256, hidden_dim=512):
         super().__init__()
         
@@ -162,13 +163,16 @@ class VAEDecoder(nn.Module):
         
         # 模型结构
         self.map_vec_fc = nn.Sequential(
-            nn.Linear(map_vec_dim, 256)
+            nn.Linear(map_vec_dim, 128),
+            nn.LayerNorm(128),
+            nn.GELU(),
+            nn.Linear(128, 256)
         )
-        self.tile_embedding = GinkaTileEmbedding(tile_classes=self.tile_classes)
-        self.pos_embedding = GinkaPosEmbedding()
-        self.map_patch = GinkaMapPatch(tile_classes=self.tile_classes)
-        self.feat_fusion = GinkaInputFusion()
-        self.rnn = GinkaRNN(tile_classes=self.tile_classes, hidden_dim=self.rnn_hidden)
+        self.tile_embedding = DecoderTileEmbedding(tile_classes=self.tile_classes)
+        self.pos_embedding = DecoderPosEmbedding()
+        self.map_patch = DecoderMapPatch(tile_classes=self.tile_classes)
+        self.feat_fusion = DecoderInputFusion()
+        self.rnn = DecoderRNN(tile_classes=self.tile_classes, hidden_dim=self.rnn_hidden)
         
         self.col_list = []
         self.row_list = []
@@ -181,7 +185,7 @@ class VAEDecoder(nn.Module):
         """
         map_vec: [B, vec_dim]
         target_map: [B, H, W]
-        use_self: 是否使用自己生成的上一步结果执行下一步
+        use_self_probility: 使用自己生成的上一步结果执行下一步的概率
         """
         B, C = map_vec.shape
         
@@ -194,7 +198,7 @@ class VAEDecoder(nn.Module):
         
         col_list = torch.IntTensor(self.col_list).to(self.device).expand(B, -1)
         row_list = torch.IntTensor(self.row_list).to(self.device).expand(B, -1)
-        pos_embed = self.pos_embedding(col_list, row_list)
+        col_embed, row_embed = self.pos_embedding(col_list, row_list)
         
         map_vec = self.map_vec_fc(map_vec)
         
@@ -206,7 +210,7 @@ class VAEDecoder(nn.Module):
                 use_self = random.random() < use_self_probility
                 map_patch = self.map_patch(map if use_self else target_map, x, y)
                 # 编码特征融合
-                feat = self.feat_fusion(tile_embed, map_vec, pos_embed[:, idx], map_patch)
+                feat = self.feat_fusion(tile_embed, map_vec, col_embed[:, idx], row_embed[:, idx], map_patch)
                 # RNN 输出
                 logits, h = self.rnn(feat, hidden)
                 # 处理输出
