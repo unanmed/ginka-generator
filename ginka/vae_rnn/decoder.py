@@ -84,12 +84,12 @@ class GinkaPosEmbedding(nn.Module):
         self.width = width
         self.height = height
         
-        self.row_embedding = nn.Embedding(width, embed_dim)
-        self.col_embedding = nn.Embedding(height, embed_dim)
+        self.row_embedding = nn.Embedding(height, embed_dim)
+        self.col_embedding = nn.Embedding(width, embed_dim)
         
     def forward(self, x: torch.Tensor, y: torch.Tensor):
-        row = self.row_embedding(x).squeeze(1)
-        col = self.col_embedding(y).squeeze(1)
+        row = self.row_embedding(y).squeeze(1)
+        col = self.col_embedding(x).squeeze(1)
         
         return row, col
     
@@ -104,7 +104,7 @@ class GinkaInputFusion(nn.Module):
                 d_model=d_model, nhead=2, dim_feedforward=d_model, batch_first=True,
                 dropout=0.2
             ),
-            num_layers=4
+            num_layers=3
         )
         
     def forward(
@@ -220,13 +220,13 @@ if __name__ == "__main__":
     
     # 前向传播
     start = time.perf_counter()
-    fake_logits, fake_map = model(map_vec, input, 0)
+    fake_logits = model(map_vec, input, 0)
     end = time.perf_counter()
     
     print_memory("前向传播后")
     
     print(f"推理耗时: {end - start}")
-    print(f"输出形状: fake_logits={fake_logits.shape}, fake_map={fake_map.shape}")
+    print(f"输出形状: fake_logits={fake_logits.shape}")
     print(f"Map Vector FC parameters: {sum(p.numel() for p in model.map_vec_fc.parameters())}")
     print(f"Tile Embedding parameters: {sum(p.numel() for p in model.tile_embedding.parameters())}")
     print(f"Position Embedding parameters: {sum(p.numel() for p in model.pos_embedding.parameters())}")
