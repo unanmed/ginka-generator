@@ -104,7 +104,11 @@ class DecoderInputFusion(nn.Module):
             num_layers=2
         )
         self.norm = nn.LayerNorm(d_model)
-        self.fusion = nn.Linear(d_model * 2, d_model)
+        self.fusion = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU()
+        )
         
     def forward(
         self, tile_embed: torch.Tensor, cond_vec: torch.Tensor, 
