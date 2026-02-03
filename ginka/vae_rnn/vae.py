@@ -10,7 +10,7 @@ class GinkaVAE(nn.Module):
     def __init__(self, device, tile_classes=32, latent_dim=32):
         super().__init__()
         self.encoder = VAEEncoder(device, tile_classes, latent_dim)
-        self.decoder = VAEDecoder(device)
+        self.decoder = VAEDecoder(device, map_vec_dim=latent_dim)
         
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
