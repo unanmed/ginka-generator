@@ -65,7 +65,12 @@ disable_tqdm = not sys.stdout.isatty()
 
 def gt_prob(epoch: int, max_epoch: int) -> float:
     progress = epoch / max_epoch
-    return 1
+    if progress < 0.2:
+        return 1
+    elif progress < 0.8:
+        return 1 - (progress - 0.2) / 0.6
+    else:
+        return 0
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="training codes")
@@ -115,30 +120,24 @@ def train():
         
     for epoch in tqdm(range(args.epochs), desc="VAE Training", disable=disable_tqdm):
         loss_total = torch.Tensor([0]).to(device)
-        reco_loss_total = torch.Tensor([0]).to(device)
-        kl_loss_total = torch.Tensor([0]).to(device)
         
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             target_map = batch["target_map"].to(device)
             
             fake_logits, mu, logvar = vae(target_map, 1 - gt_prob(epoch, args.epochs))
             
-            loss, reco_loss, kl_loss = criterion.vae_loss(fake_logits, target_map, mu, logvar, KL_BETA)
+            loss = criterion.vae_loss(fake_logits, target_map, mu, logvar, KL_BETA)
             
             loss.backward()
             torch.nn.utils.clip_grad_norm_(vae.parameters(), max_norm=1.0)
             optimizer_ginka.step()
             loss_total += loss.detach()
-            reco_loss_total += reco_loss.detach()
-            kl_loss_total += kl_loss.detach()
                 
         avg_loss = loss_total.item() / len(dataloader)
-        avg_reco_loss = reco_loss_total.item() / len(dataloader)
-        avg_kl_loss = kl_loss_total.item() / len(dataloader)
         tqdm.write(
             f"[Epoch {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " +
-            f"E: {epoch + 1} | Loss: {avg_loss:.6f} | Reco Loss: {avg_reco_loss:.6f} | " +
-            f"KL Loss: {avg_kl_loss:.6f} | LR: {optimizer_ginka.param_groups[0]['lr']:.6f}"
+            f"E: {epoch + 1} | Loss: {avg_loss:.6f} | " +
+            f"LR: {optimizer_ginka.param_groups[0]['lr']:.6f}"
         )
         
         scheduler_ginka.step()
@@ -153,7 +152,6 @@ def train():
         
             val_loss_total = torch.Tensor([0]).to(device)
             reco_loss_total = torch.Tensor([0]).to(device)
-            kl_loss_total = torch.Tensor([0]).to(device)
             with torch.no_grad():
                 idx = 0
                 gap = 5
@@ -163,12 +161,10 @@ def train():
                 for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
                     target_map = batch["target_map"].to(device)
                     
-                    fake_logits, mu, logvar = vae(target_map, 1 - gt_prob(epoch, args.epochs))
+                    fake_logits, z = vae(target_map, 1 - gt_prob(epoch, args.epochs))
 
-                    loss, reco_loss, kl_loss = criterion.vae_loss(fake_logits, target_map, mu, logvar, KL_BETA)
+                    loss = criterion.vae_loss(fake_logits, target_map, z, KL_BETA)
                     val_loss_total += loss.detach()
-                    reco_loss_total += reco_loss.detach()
-                    kl_loss_total += kl_loss.detach()
                     
                     fake_map = torch.argmax(fake_logits, dim=1).cpu().numpy()
                     fake_img = matrix_to_image_cv(fake_map[0], tile_dict)
@@ -195,10 +191,8 @@ def train():
                 index2 = random.randint(0, val_length - 1)
                 map1 = torch.LongTensor(dataset_val.data[index1]["map"]).to(device).reshape(1, 13, 13)
                 map2 = torch.LongTensor(dataset_val.data[index2]["map"]).to(device).reshape(1, 13, 13)
-                mu1, logvar1 = vae.encoder(map1)
-                mu2, logvar2 = vae.encoder(map2)
-                z1 = vae.reparameterize(mu1, logvar1)
-                z2 = vae.reparameterize(mu2, logvar2)
+                z1 = vae.encoder(map1)
+                z2 = vae.encoder(map2)
                 real_img1 = matrix_to_image_cv(map1[0].cpu().numpy(), tile_dict)
                 real_img2 = matrix_to_image_cv(map2[0].cpu().numpy(), tile_dict)
                 i = 0
@@ -213,12 +207,9 @@ def train():
                     i += 1
                     
             avg_loss_val = val_loss_total.item() / len(dataloader_val)
-            avg_reco_loss = reco_loss_total.item() / len(dataloader_val)
-            avg_kl_loss = kl_loss_total.item() / len(dataloader_val)
             tqdm.write(
                 f"[Validate {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] E: {epoch + 1} | " +
-                f"Loss: {avg_loss_val:.6f} | Reco Loss: {avg_reco_loss:.6f} | " +
-                f"KL Loss: {avg_kl_loss:.6f}"
+                f"Loss: {avg_loss_val:.6f}"
             )
             
     print("Train ended.")

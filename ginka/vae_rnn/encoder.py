@@ -91,6 +91,9 @@ class VAEEncoder(nn.Module):
         self.embedding = EncoderEmbedding(tile_classes, width, height, 128, 256)
         self.rnn = EncoderGRU(256, self.rnn_hidden, self.logits_dim)
         self.fusion = EncoderFusion(256)
+        self.fc = nn.Sequential(
+            nn.Linear(512, latent_dim)
+        )
         self.fc_mu = nn.Linear(512, latent_dim)
         self.fc_logvar = nn.Linear(512, latent_dim)
         
@@ -118,9 +121,8 @@ class VAEEncoder(nn.Module):
             output[:, idx] = logits
 
         h = self.fusion(output)
-        mu = self.fc_mu(h)
-        logvar = self.fc_logvar(h)
-        return mu, logvar
+        vec = self.fc(h)
+        return vec
 
 if __name__ == "__main__":
     device = torch.device("cpu")
