@@ -1,4 +1,9 @@
-import { ICodeRunResult, IConvertedMap, INeededFloorData } from './types';
+import {
+    IAutoLabelConfig,
+    ICodeRunResult,
+    IConvertedMap,
+    INeededFloorData
+} from './types';
 
 /**
  * 运行塔的代码
@@ -39,7 +44,8 @@ function edge(x: number, y: number, width: number, height: number) {
 
 export function convertTowerMap(
     result: ICodeRunResult,
-    floor: INeededFloorData
+    floor: INeededFloorData,
+    config: IAutoLabelConfig
 ): IConvertedMap {
     const width = floor.map[0].length;
     const height = floor.map.length;
@@ -109,33 +115,31 @@ export function convertTowerMap(
     core.status.hero.def = 0;
     core.status.hero.mdef = 0;
 
+    const tiles = config.classes;
+
     for (let nx = 0; nx < width; nx++) {
         for (let ny = 0; ny < height; ny++) {
             const num = floor.map[ny][nx];
-            if (num === 0) {
-                converted[ny][nx] = 0;
-                continue;
-            } else if (num === 17) {
-                hasCannotInOut = true;
-                converted[ny][nx] = 0;
+            if (num === 0 || num === 17) {
+                converted[ny][nx] = tiles.empty;
                 continue;
             }
             const loc = `${nx},${ny}`;
             if (floor.changeFloor[loc]) {
-                converted[ny][nx] = 29;
+                converted[ny][nx] = tiles.entry;
                 continue;
             }
             const block = result.map[num];
             if (!block) {
                 // 图块不存在说明是额外素材中的内容，默认不可通行，视为墙壁
-                converted[ny][nx] = 1;
+                converted[ny][nx] = tiles.wall;
                 continue;
             }
             // 怪物处理
             if (block.cls === 'enemys' || block.cls === 'enemy48') {
                 const enemy = result.enemy[block.id];
                 if (!enemy) {
-                    converted[ny][nx] = 0;
+                    converted[ny][nx] = tiles.empty;
                     continue;
                 }
                 const value = enemy.hp * (enemy.atk + enemy.def);
@@ -146,7 +150,7 @@ export function convertTowerMap(
             if (block.cls === 'items') {
                 const item = result.item[block.id];
                 if (!item) {
-                    converted[ny][nx] = 0;
+                    converted[ny][nx] = tiles.empty;
                     continue;
                 }
                 // 先清空内容
@@ -155,22 +159,32 @@ export function convertTowerMap(
                 heroStatus.def = 0;
                 heroStatus.mdef = 0;
                 if (block.id === 'pickaxe') {
-                    converted[ny][nx] = 24;
+                    const idx = Math.min(tiles.items.length - 1, 0);
+                    converted[ny][nx] = tiles.items[idx];
                     continue;
                 } else if (block.id === 'bomb') {
-                    converted[ny][nx] = 24;
+                    const idx = Math.min(tiles.items.length - 1, 1);
+                    converted[ny][nx] = tiles.items[idx];
                     continue;
                 } else if (block.id === 'centerFly') {
-                    converted[ny][nx] = 23;
+                    const idx = Math.min(tiles.items.length - 1, 2);
+                    converted[ny][nx] = tiles.items[idx];
                     continue;
                 } else if (block.id === 'yellowKey') {
-                    converted[ny][nx] = 7;
+                    const idx = Math.min(tiles.items.length - 1, 0);
+                    converted[ny][nx] = tiles.keys[idx];
                     continue;
                 } else if (block.id === 'blueKey') {
-                    converted[ny][nx] = 8;
+                    const idx = Math.min(tiles.items.length - 1, 1);
+                    converted[ny][nx] = tiles.keys[idx];
                     continue;
                 } else if (block.id === 'redKey') {
-                    converted[ny][nx] = 9;
+                    const idx = Math.min(tiles.items.length - 1, 2);
+                    converted[ny][nx] = tiles.keys[idx];
+                    continue;
+                } else if (block.id === 'greenKey') {
+                    const idx = Math.min(tiles.items.length - 1, 3);
+                    converted[ny][nx] = tiles.keys[idx];
                     continue;
                 }
                 // 执行道具效果
@@ -213,30 +227,34 @@ export function convertTowerMap(
                     itemMap.set(ny * width + nx, arr);
                     continue;
                 } else {
-                    converted[ny][nx] = 0;
+                    converted[ny][nx] = tiles.empty;
                     continue;
                 }
             }
             // 门信息，这种处理方式只能处理 2.7+ 的塔，老塔估计处理不了，不过老塔占比也不大，忽略就好了
             if (block.doorInfo && Object.keys(block.doorInfo.keys).length > 0) {
                 if (block.id === 'specialDoor') {
-                    converted[ny][nx] = 6;
+                    converted[ny][nx] = tiles.specialDoors[0];
                     continue;
-                } else if (
-                    'redKey' in block.doorInfo.keys ||
-                    'greenKey' in block.doorInfo.keys
-                ) {
-                    converted[ny][nx] = 5;
+                } else if ('greenKey' in block.doorInfo.keys) {
+                    const idx = Math.min(tiles.commonDoors.length - 1, 3);
+                    converted[ny][nx] = tiles.commonDoors[idx];
+                } else if ('redKey' in block.doorInfo.keys) {
+                    const idx = Math.min(tiles.commonDoors.length - 1, 2);
+                    converted[ny][nx] = tiles.commonDoors[idx];
                     continue;
                 } else if ('blueKey' in block.doorInfo.keys) {
-                    converted[ny][nx] = 4;
+                    const idx = Math.min(tiles.commonDoors.length - 1, 1);
+                    converted[ny][nx] = tiles.commonDoors[idx];
                     continue;
                 } else if ('yellowKey' in block.doorInfo.keys) {
-                    converted[ny][nx] = 3;
+                    const idx = Math.min(tiles.commonDoors.length - 1, 0);
+                    converted[ny][nx] = tiles.commonDoors[idx];
                     continue;
                 } else {
-                    // 其他门一律视为黄门
-                    converted[ny][nx] = 3;
+                    // 其余视为绿门
+                    const idx = Math.min(tiles.commonDoors.length - 1, 3);
+                    converted[ny][nx] = tiles.commonDoors[idx];
                     continue;
                 }
             }
@@ -261,16 +279,16 @@ export function convertTowerMap(
                 fg2Block?.cannotIn ||
                 fg2Block?.cannotOut
             ) {
-                converted[ny][nx] = 0;
+                converted[ny][nx] = tiles.empty;
                 hasCannotInOut = true;
                 continue;
             }
             // 墙壁处理
             if (block.canPass) {
-                converted[ny][nx] = 0;
+                converted[ny][nx] = tiles.empty;
                 continue;
             } else {
-                converted[ny][nx] = 1;
+                converted[ny][nx] = tiles.wall;
             }
         }
     }
@@ -285,15 +303,18 @@ export function convertTowerMap(
         enemyMap.forEach((value, pos) => {
             const nx = pos % width;
             const ny = Math.floor(pos / width);
-            converted[ny][nx] = 26;
+            converted[ny][nx] = tiles.enemies[0];
         });
     } else {
         enemyMap.forEach((value, pos) => {
             const nx = pos % width;
             const ny = Math.floor(pos / width);
             const ratio = (value - minEnemyValue) / enemyValueDelta;
-            const n = Math.min(Math.floor(ratio * 3), 2);
-            converted[ny][nx] = 26 + n;
+            const idx = Math.min(
+                Math.floor(ratio * tiles.enemies.length),
+                tiles.enemies.length - 1
+            );
+            converted[ny][nx] = tiles.enemies[idx];
         });
     }
 
@@ -317,19 +338,19 @@ export function convertTowerMap(
         // 资源判定为占比最大的那个
         // 如果只有一种资源且道具包含这种属性，全部使用最低的资源种类
         if (minHpValue === maxHpValue && hp > 0) {
-            converted[ny][nx] = 19;
+            converted[ny][nx] = tiles.potions[0];
             return;
         }
         if (minAtkValue === maxAtkValue && atk > 0) {
-            converted[ny][nx] = 10;
+            converted[ny][nx] = tiles.redGems[0];
             return;
         }
         if (minDefValue === maxDefValue && def > 0) {
-            converted[ny][nx] = 13;
+            converted[ny][nx] = tiles.blueGems[0];
             return;
         }
         if (minMdefValue === maxMdefValue && mdef > 0) {
-            converted[ny][nx] = 16;
+            converted[ny][nx] = tiles.greenGems[0];
             return;
         }
         const hpRatio = (hp - minHpValue) / hpValueDelta;
@@ -353,68 +374,38 @@ export function convertTowerMap(
         switch (maxIndex) {
             case 0: {
                 // 血瓶
-                const n = Math.min(Math.floor(hpRatio * 4), 3);
-                converted[ny][nx] = 19 + n;
+                const idx = Math.min(
+                    Math.floor(hpRatio * tiles.potions.length),
+                    tiles.potions.length - 1
+                );
+                converted[ny][nx] = tiles.potions[idx];
                 break;
             }
             case 1: {
                 // 红宝石，这里不可能只有一种数值了，不需要判断
-                if (itemAtkSet.size === 2) {
-                    if (atkRatio <= 0.5) {
-                        // 小宝石
-                        converted[ny][nx] = 10;
-                    } else {
-                        // 大宝石
-                        if (maxAtkValue / minAtkValue > 3) {
-                            converted[nx][nx] = 12;
-                        } else {
-                            converted[ny][nx] = 11;
-                        }
-                    }
-                } else {
-                    const n = Math.min(Math.floor(atkRatio * 3), 2);
-                    converted[ny][nx] = 10 + n;
-                }
+                const idx = Math.min(
+                    Math.floor(atkRatio * tiles.redGems.length),
+                    tiles.redGems.length - 1
+                );
+                converted[ny][nx] = tiles.redGems[idx];
                 break;
             }
             case 2: {
                 // 蓝宝石，这里不可能只有一种数值了，不需要判断
-                if (itemDefSet.size === 2) {
-                    if (defRatio <= 0.5) {
-                        // 小宝石
-                        converted[ny][nx] = 13;
-                    } else {
-                        // 大宝石
-                        if (maxDefValue / minDefValue > 3) {
-                            converted[nx][nx] = 15;
-                        } else {
-                            converted[ny][nx] = 14;
-                        }
-                    }
-                } else {
-                    const n = Math.min(Math.floor(defRatio * 3), 2);
-                    converted[ny][nx] = 13 + n;
-                }
+                const idx = Math.min(
+                    Math.floor(defRatio * tiles.blueGems.length),
+                    tiles.blueGems.length - 1
+                );
+                converted[ny][nx] = tiles.blueGems[idx];
                 break;
             }
             case 2: {
                 // 绿宝石，这里不可能只有一种数值了，不需要判断
-                if (itemMdefSet.size === 2) {
-                    if (mdefRatio <= 0.5) {
-                        // 小宝石
-                        converted[ny][nx] = 16;
-                    } else {
-                        // 大宝石
-                        if (maxMdefValue / minMdefValue > 3) {
-                            converted[nx][nx] = 18;
-                        } else {
-                            converted[ny][nx] = 17;
-                        }
-                    }
-                } else {
-                    const n = Math.min(Math.floor(mdefRatio * 3), 2);
-                    converted[ny][nx] = 16 + n;
-                }
+                const idx = Math.min(
+                    Math.floor(mdefRatio * tiles.greenGems.length),
+                    tiles.greenGems.length - 1
+                );
+                converted[ny][nx] = tiles.greenGems[idx];
                 break;
             }
         }
@@ -428,7 +419,7 @@ export function convertTowerMap(
                 !isFinite(converted[ny][nx]) ||
                 converted[ny][nx] < 0
             ) {
-                converted[ny][nx] = 0;
+                converted[ny][nx] = tiles.empty;
             }
         }
     }

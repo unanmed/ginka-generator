@@ -95,7 +95,44 @@ export interface IFloorInfo {
     readonly wallDensityStd: number;
 }
 
+export interface IMapBlockConfig {
+    /** 空地的图块数字 */
+    readonly empty: number;
+    /** 墙的图块数字 */
+    readonly wall: number;
+    /** 装饰图块 */
+    readonly decoration: number;
+    /**
+     * 普通门，黄、蓝、红、绿等级依次增加，如果数组长度不够，会取最高级的那个，
+     * 对于四种基础门之外的门，会进入 `specialDoors` 判断
+     */
+    readonly commonDoors: number[];
+    /** 机关门，普通机关门使用第一项作为结果，对于四种基础门及机关门之外的门，会选用第二项作为结果 */
+    readonly specialDoors: [number, number];
+    /**
+     * 钥匙，黄、蓝、红、绿等级依次增加，如果数组长度不够，会取最高级的那个，
+     * 特殊钥匙视为最高级
+     */
+    readonly keys: number[];
+    /** 红宝石图块，平均分为若干档 */
+    readonly redGems: number[];
+    /** 蓝宝石图块，平均分为若干档 */
+    readonly blueGems: number[];
+    /** 绿宝石图块，平均分为若干档 */
+    readonly greenGems: number[];
+    /** 血瓶图块，平均分为若干档 */
+    readonly potions: number[];
+    /** 道具图块，依次为破炸飞，如果长度不够则取最后一个 */
+    readonly items: number[];
+    /** 怪物图块，按怪物强度分为若干当，强度为血量乘攻防和 */
+    readonly enemies: number[];
+    /** 入口图块 */
+    readonly entry: number;
+}
+
 export interface IAutoLabelConfig {
+    /** 地图图块分类 */
+    readonly classes: Readonly<IMapBlockConfig>;
     /** 地图允许大小 */
     readonly allowedSize: [number, number][];
     /** 是否允许无用节点 */

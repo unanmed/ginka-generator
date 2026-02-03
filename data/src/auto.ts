@@ -103,7 +103,14 @@ const ignoredTower: string[] = [
     'zjhy1',
     'zrsz',
     'zuozuozhieX_renewed',
-    'ZZZE50Ex'
+    'ZZZE50Ex',
+    '1DQSJ',
+    'againstcov',
+    'Alive',
+    'Aria',
+    'atom',
+    'bdf1',
+    'bingyuanhouzhuan'
 ];
 
 const ignoredFloor: Record<string, string[]> = {
@@ -119,7 +126,8 @@ const ignoredFloor: Record<string, string[]> = {
         'MT71',
         'ML26',
         'ML27',
-        'MQ28'
+        'MQ28',
+        'MT104'
     ],
     cxzl: [
         'MT63',
@@ -153,11 +161,11 @@ const ignoredFloor: Record<string, string[]> = {
     zd1: ['MH9', 'MT10'],
     zhenshishenghuo: ['MT52', 'MT131', 'MT132'],
     CatLegend: ['MT20', 'MT63', 'MT67'],
-    cxzl_wycx: ['MT304', 'MT777'],
+    cxzl_wycx: ['MT304', 'MT777', 'MT494'],
     evernight: ['MT30'],
     bits1: ['MT28'],
-    bits2: ['dltsd5'],
-    bits114514: ['bysl7', 'byxd3', 'mkpy6', 'sdhxmiddle1'],
+    bits2: ['dltsd5', 'hdxd5'],
+    bits114514: ['bysl7', 'byxd3', 'mkpy6', 'sdhxmiddle1', 'zlzl1', 'zlzl2'],
     Black: ['MT12'],
     chaoshuang2: ['MT153'],
     EasyPreduct: ['PT40'],
@@ -214,10 +222,36 @@ const ignoredFloor: Record<string, string[]> = {
     WhiteLily_1521: ['B9'],
     xsdsj: ['MT40'],
     xxchuanshuo0: ['D35', 'D38', 'D39'],
-    yesterdayReturn: ['MT6-1']
+    yesterdayReturn: ['MT6-1'],
+    '9922': [
+        'Ch4_15',
+        'East3',
+        'East7',
+        'MT12',
+        'East11',
+        'North2',
+        'North3',
+        'North4'
+    ],
+    amiyamiya: ['MT27']
 };
 
 const labelConfig: IAutoLabelConfig = {
+    classes: {
+        empty: 0,
+        wall: 1,
+        decoration: 2,
+        commonDoors: [3],
+        specialDoors: [6, 6],
+        keys: [7],
+        redGems: [10],
+        blueGems: [13],
+        greenGems: [16],
+        potions: [19],
+        items: [23],
+        enemies: [26],
+        entry: 29
+    },
     allowedSize: [[13, 13]],
     allowUselessBranch: false,
     maxWallDensityStd: 0.25,
@@ -228,17 +262,23 @@ const labelConfig: IAutoLabelConfig = {
     minResourceRatio: 0.02,
     maxResourceRatio: 0.3,
     minDoorRatio: 0,
-    maxDoorRatio: 0.2,
+    maxDoorRatio: 0.12,
     minFishCount: 0,
     maxFishCount: 2,
     minEntryCount: 1,
     maxEntryCount: 4,
     ignoreIssues: true,
     customTowerFilter: info => {
+        // if (info.name !== 'Apeiria') {
+        //     return false;
+        // }
         // if (info.color !== TowerColor.Blue && info.color !== TowerColor.Green) {
         //     return false;
         // }
         if (info.people < 1000) {
+            return false;
+        }
+        if (info.name.startsWith('50') && info.name.length > 2) {
             return false;
         }
         if (info.name.startsWith('51') && info.name.length > 2) {
@@ -250,7 +290,6 @@ const labelConfig: IAutoLabelConfig = {
         if (ignoredTower.includes(info.name)) {
             return false;
         }
-
         return true;
     },
     customFloorFilter: floor => {
@@ -267,7 +306,7 @@ const labelConfig: IAutoLabelConfig = {
             return false;
         }
         if (floor.tower.name === 'Apeiria') {
-            return Math.random() > 0.9;
+            return Math.random() < 0.2;
         }
         return true;
     }

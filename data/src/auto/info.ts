@@ -1,6 +1,6 @@
 import { readFile } from 'fs/promises';
 import { IFloorInfo, ITowerInfo, TowerColor } from './types';
-import { buildTopologicalGraph } from 'src/topology/graph';
+import { buildTopologicalGraph } from '../topology/graph';
 import {
     commonDoorTiles,
     doorTiles,
@@ -14,8 +14,8 @@ import {
     resourceTiles,
     specialDoorTiles,
     wallTiles
-} from 'src/shared';
-import { NodeType } from 'src/topology/interface';
+} from '../shared';
+import { NodeType } from '../topology/interface';
 
 interface IRawTowerInfo {
     /** 作者 id */

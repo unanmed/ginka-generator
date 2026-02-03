@@ -67,13 +67,18 @@ class EncoderFusion(nn.Module):
             num_layers=2
         )
         self.norm = nn.LayerNorm(d_model)
+        self.fc = nn.Sequential(
+            nn.Linear(d_model * 2, d_model * 2),
+            nn.LayerNorm(d_model * 2),
+            nn.GELU()
+        )
     
     def forward(self, logits):
         x = self.norm(self.transformer(logits))
         h_mean = torch.mean(x, dim=1)
         h_max = torch.max(x, dim=1).values
         h = torch.cat([h_mean, h_max], dim=1)
-        return h
+        return self.fc(h)
 
 class VAEEncoder(nn.Module):
     def __init__(self, device, tile_classes=32, latent_dim=32, width=13, height=13):

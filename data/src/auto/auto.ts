@@ -94,7 +94,7 @@ export async function autoLabelTowers(
                 continue;
             }
             // 转换楼层
-            const converted = convertTowerMap(result, floor);
+            const converted = convertTowerMap(result, floor, config);
             const floorInfo = parseFloorInfo(info, converted.map);
             const floorData: IConvertedMapInfo = {
                 data: converted,
