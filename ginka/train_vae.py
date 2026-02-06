@@ -150,9 +150,8 @@ def train():
 
                 loss, reco_loss, kl_loss = criterion.vae_loss(fake_logits, target_map, mu, logvar, KL_BETA)
                 val_loss_total += loss.detach()
-                
-                idx += 1
         
+        avg_loss_val = val_loss_total.item() / len(dataloader_val)
         if avg_loss_val < 0.5 and gt_prob > 0:
             gt_prob -= 0.01
         
