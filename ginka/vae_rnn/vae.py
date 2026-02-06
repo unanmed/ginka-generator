@@ -18,9 +18,10 @@ class GinkaVAE(nn.Module):
         return mu + eps * std
 
     def forward(self, target_map: torch.Tensor, use_self_probility=0):
-        z = self.encoder(target_map)
+        mu, logvar = self.encoder(target_map)
+        z = self.reparameterize(mu, logvar)
         logits = self.decoder(z, target_map, use_self_probility)
-        return logits, z
+        return logits, mu, logvar
     
 if __name__ == "__main__":
     device = torch.device("cpu")
@@ -34,13 +35,13 @@ if __name__ == "__main__":
     
     # 前向传播
     start = time.perf_counter()
-    logits, z = model(input)
+    logits, mu, logvar = model(input)
     end = time.perf_counter()
     
     print_memory("前向传播后")
     
     print(f"推理耗时: {end - start}")
-    print(f"输出形状: logits= {logits.shape}, z={z.shape}")
+    print(f"输出形状: logits= {logits.shape}, mu={mu.shape}, logvar={logvar.shape}")
     print(f"Encoder parameters: {sum(p.numel() for p in model.encoder.parameters())}")
     print(f"Decoder parameters: {sum(p.numel() for p in model.decoder.parameters())}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")

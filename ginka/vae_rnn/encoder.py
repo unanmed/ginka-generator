@@ -121,8 +121,9 @@ class VAEEncoder(nn.Module):
             output[:, idx] = logits
 
         h = self.fusion(output)
-        vec = self.fc(h)
-        return vec
+        mu = self.fc_mu(h)
+        logvar = self.fc_logvar(h)
+        return mu, logvar
 
 if __name__ == "__main__":
     device = torch.device("cpu")
