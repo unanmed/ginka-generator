@@ -58,7 +58,8 @@ LATENT_DIM = 48
 KL_BETA = 0.1
 SELF_GATE = 0.5
 GATE_EPOCH = 5
-VAL_BATCH_DIVIDER = 1
+VAL_BATCH_DIVIDER = 128
+PROB_STEP = 0.05
 
 device = torch.device(
     "cuda:1" if torch.cuda.is_available()
@@ -168,10 +169,14 @@ def train():
         # 先使用训练集的损失值，因为过拟合比较严重，后续再想办法
         if avg_loss < SELF_GATE:
             prob_epochs += 1
+        else:
+            prob_epochs = 0
 
         if prob_epochs >= GATE_EPOCH and self_prob < 1:
-            self_prob += 0.01
+            self_prob += PROB_STEP
             prob_epochs = 0
+            if self_prob > 1:
+                self_prob = 1
         
         scheduler_ginka.step(avg_loss, self_prob)
 
