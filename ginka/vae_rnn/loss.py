@@ -6,8 +6,8 @@ class VAELoss:
         self.num_classes = 32
     
     def vae_loss(self, logits, target, mu, logvar, beta=0.1):
-        # target: [B, 13, 13]
-        target = F.one_hot(target, num_classes=self.num_classes).float().permute(0, 3, 1, 2)
+        # target: [B, 169]
+        target = F.one_hot(target, num_classes=self.num_classes).float()
         recon_loss = F.cross_entropy(logits, target)
 
         kl_loss = -0.5 * torch.mean(
