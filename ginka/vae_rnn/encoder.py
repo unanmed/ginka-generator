@@ -38,9 +38,10 @@ class EncoderGRU(nn.Module):
         
         # GRU
         self.gru = nn.GRUCell(input_dim, hidden_dim)
-        self.drop = nn.Dropout(0.1)
+        self.drop = nn.Dropout(0.2)
         self.fc = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
+            nn.Dropout(0.1),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
             
@@ -62,13 +63,14 @@ class EncoderFusion(nn.Module):
         
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=d_model, dim_feedforward=d_model, nhead=2, batch_first=True
+                d_model=d_model, dim_feedforward=d_model*2, nhead=2, batch_first=True
             ),
-            num_layers=2
+            num_layers=3
         )
         self.norm = nn.LayerNorm(d_model)
         self.fc = nn.Sequential(
             nn.Linear(d_model * 2, d_model * 2),
+            nn.Dropout(0.1),
             nn.LayerNorm(d_model * 2),
             nn.GELU()
         )
@@ -91,11 +93,20 @@ class VAEEncoder(nn.Module):
         self.embedding = EncoderEmbedding(tile_classes, width, height, 128, 256)
         self.rnn = EncoderGRU(256, self.rnn_hidden, self.logits_dim)
         self.fusion = EncoderFusion(256)
-        self.fc = nn.Sequential(
+        self.fc_mu = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.Dropout(0.1),
+            nn.LayerNorm(512),
+            nn.GELU(),
             nn.Linear(512, latent_dim)
         )
-        self.fc_mu = nn.Linear(512, latent_dim)
-        self.fc_logvar = nn.Linear(512, latent_dim)
+        self.fc_logvar = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.Dropout(0.1),
+            nn.LayerNorm(512),
+            nn.GELU(),
+            nn.Linear(512, latent_dim)
+        )
         
         self.col_list = []
         self.row_list = []
@@ -126,21 +137,21 @@ class VAEEncoder(nn.Module):
         return mu, logvar
 
 if __name__ == "__main__":
-    device = torch.device("cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     
     input = torch.randint(0, 32, [1, 13, 13]).to(device)
     
     # 初始化模型
     model = VAEEncoder(device).to(device)
     
-    print_memory("初始化后")
+    print_memory(device, "初始化后")
     
     # 前向传播
     start = time.perf_counter()
     mu, logvar = model(input)
     end = time.perf_counter()
     
-    print_memory("前向传播后")
+    print_memory(device, "前向传播后")
     
     print(f"推理耗时: {end - start}")
     print(f"输出形状: mu={mu.shape}, logvar={logvar.shape}")

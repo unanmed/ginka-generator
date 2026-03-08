@@ -54,10 +54,10 @@ from shared.image import matrix_to_image_cv
 # 29. 入口，不区分楼梯和箭头
 
 BATCH_SIZE = 128
-LATENT_DIM = 48
-KL_BETA = 0.1
-SELF_GATE = 0.5
-GATE_EPOCH = 5
+LATENT_DIM = 64
+KL_BETA = 0.01
+SELF_GATE = 0.3
+GATE_EPOCH = 10
 VAL_BATCH_DIVIDER = 128
 PROB_STEP = 0.05
 
@@ -96,10 +96,10 @@ def train():
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE // VAL_BATCH_DIVIDER, shuffle=True)
     
-    optimizer_ginka = optim.AdamW(vae.parameters(), lr=2e-4, weight_decay=1e-4)
+    optimizer_ginka = optim.AdamW(vae.parameters(), lr=3e-4, weight_decay=1e-4)
     # 自定义调度器允许在 self_prob 提高时重置调度器信息并提高学习率以适应学习
     scheduler_ginka = VAEScheduler(
-        optimizer_ginka, factor=0.9, increase_factor=2, patience=10, max_lr=2e-4, min_lr=1e-6
+        optimizer_ginka, factor=0.9, increase_factor=1.5, patience=20, max_lr=3e-4, min_lr=1e-6
     )
 
     criterion = VAELoss()
@@ -129,6 +129,7 @@ def train():
         reco_loss_total = torch.Tensor([0]).to(device)
         kl_loss_total = torch.Tensor([0]).to(device)
         
+        vae.train()
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             target_map = batch["target_map"].to(device)
             
@@ -182,6 +183,7 @@ def train():
 
         # 每若干轮输出一次图片，并保存检查点
         if (epoch + 1) % args.checkpoint == 0:
+            vae.eval()
             # 保存检查点
             torch.save({
                 "model_state": vae.state_dict(),

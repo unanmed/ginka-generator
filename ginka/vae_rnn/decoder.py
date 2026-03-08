@@ -105,7 +105,13 @@ class DecoderInputFusion(nn.Module):
         )
         self.norm = nn.LayerNorm(d_model)
         self.fusion = nn.Sequential(
+            nn.Linear(d_model * 2, d_model * 2),
+            nn.Dropout(0.2),
+            nn.LayerNorm(d_model * 2),
+            nn.GELU(),
+            
             nn.Linear(d_model * 2, d_model),
+            nn.Dropout(0.1),
             nn.LayerNorm(d_model),
             nn.GELU()
         )
@@ -138,6 +144,7 @@ class DecoderRNN(nn.Module):
         self.drop = nn.Dropout(0.2)
         self.fc = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
+            nn.Dropout(0.1),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
             
@@ -168,8 +175,10 @@ class VAEDecoder(nn.Module):
         # 模型结构
         self.map_vec_fc = nn.Sequential(
             nn.Linear(map_vec_dim, 128),
+            nn.Dropout(0.1),
             nn.LayerNorm(128),
             nn.GELU(),
+            
             nn.Linear(128, 256)
         )
         self.tile_embedding = DecoderTileEmbedding(tile_classes=self.tile_classes)
@@ -227,22 +236,22 @@ class VAEDecoder(nn.Module):
         return output_logits.permute(0, 3, 1, 2)
 
 if __name__ == "__main__":
-    device = torch.device("cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     
     input = torch.randint(0, 32, [1, 13, 13]).to(device)
     map_vec = torch.rand(1, 32).to(device)
     
     # 初始化模型
-    model = VAEDecoder("cpu").to(device)
+    model = VAEDecoder(device).to(device)
     
-    print_memory("初始化后")
+    print_memory(device, "初始化后")
     
     # 前向传播
     start = time.perf_counter()
     fake_logits = model(map_vec, input, 0)
     end = time.perf_counter()
     
-    print_memory("前向传播后")
+    print_memory(device, "前向传播后")
     
     print(f"推理耗时: {end - start}")
     print(f"输出形状: fake_logits={fake_logits.shape}")
