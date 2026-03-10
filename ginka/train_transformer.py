@@ -102,9 +102,9 @@ def train():
 
     # 用于生成图片
     tile_dict = dict()
-    for file in os.listdir('tiles'):
+    for file in os.listdir('tiles2'):
         name = os.path.splitext(file)[0]
-        tile_dict[name] = cv2.imread(f"tiles/{file}", cv2.IMREAD_UNCHANGED)
+        tile_dict[name] = cv2.imread(f"tiles2/{file}", cv2.IMREAD_UNCHANGED)
         
     if args.resume:
         data_ginka = torch.load(args.state_ginka, map_location=device)
@@ -196,6 +196,7 @@ def train():
                 color = (255, 255, 255)  # 白色
                 vline = np.full((416, gap, 3), color, dtype=np.uint8)  # 垂直分割线
                 # 地图重建展示
+                vae.teacher_forcing()
                 for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
                     target_map = batch["target_map"].to(device)
                     B, H, W = target_map.shape
@@ -218,10 +219,10 @@ def train():
                     idx += 1
                 
                 # 随机采样
+                vae.autoregressive()
                 for i in range(0, 8):
                     z = torch.randn(1, LATENT_DIM).to(device)
                     
-                    vae.autoregressive()
                     fake_logits = vae.decoder(z, torch.zeros(1, 169).to(device))
                     fake_map = fake_logits[:,0:169].view(-1, 13, 13).cpu().numpy()
                     fake_img = matrix_to_image_cv(fake_map[0], tile_dict)
