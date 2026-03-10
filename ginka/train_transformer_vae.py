@@ -42,16 +42,8 @@ from shared.image import matrix_to_image_cv
 # 12. 咸鱼门数量（多层咸鱼门只算一个）
 
 # 图块定义：
-# 0. 空地, 1. 墙壁, 2. 装饰（用于野外装饰，视为空地）, 
-# 3. 黄门, 4. 蓝门, 5. 红门, 6. 机关门, 其余种类的门如绿门都视为红门
-# 7-9. 黄蓝红门钥匙，机关门不使用钥匙开启
-# 10-12. 三种等级的红宝石
-# 13-15. 三种等级的蓝宝石
-# 16-18. 三种等级的绿宝石
-# 19-22. 四种等级的血瓶
-# 23-25. 三种等级的道具
-# 26-28. 三种等级的怪物
-# 29. 入口，不区分楼梯和箭头
+# 0. 空地, 1. 墙壁, 2. 门, 3. 钥匙, 4. 红宝石, 5. 蓝宝石, 6. 绿宝石, 7. 血瓶
+# 8. 道具, 9. 怪物, 10. 入口, 14. 起始 token, 15. 终止 token
 
 BATCH_SIZE = 8
 LATENT_DIM = 48
@@ -60,6 +52,7 @@ SELF_GATE = 0.5
 GATE_EPOCH = 5
 VAL_BATCH_DIVIDER = 8
 PROB_STEP = 0.05
+NUM_CLASSES = 16
 
 device = torch.device(
     "cuda:1" if torch.cuda.is_available()
@@ -89,7 +82,7 @@ def train():
     
     args = parse_arguments()
     
-    vae = GinkaTransformerVAE(latent_dim=LATENT_DIM).to(device)
+    vae = GinkaTransformerVAE(num_classes=NUM_CLASSES, latent_dim=LATENT_DIM).to(device)
     
     dataset = GinkaRNNDataset(args.train, device)
     dataset_val = GinkaRNNDataset(args.validate, device)

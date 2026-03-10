@@ -10,7 +10,7 @@ class GinkaTransformerDecoder(nn.Module):
         self.dim_ff = dim_ff
         self.map_size = map_size
         self.embedding = nn.Embedding(num_classes, dim_ff)
-        self.pos_embedding = nn.Embedding(map_size, dim_ff)
+        self.pos_embedding = nn.Embedding(map_size + 1, dim_ff)
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(d_model=dim_ff, dim_feedforward=dim_ff, nhead=nhead, batch_first=True),
             num_layers=max(num_layers // 2, 1)
@@ -31,12 +31,14 @@ class GinkaTransformerDecoder(nn.Module):
         B, L = target_map.shape
         
         memory = self.encoder(z.unsqueeze(1)) # [B, 1, dim_ff]
-        mask = torch.triu(torch.ones(L, L, dtype=torch.bool)).to(z.device) # [B, H * W, H * W]
+        mask = torch.triu(torch.ones(L + 1, L + 1, dtype=torch.bool)).to(z.device) # [B, H * W, H * W]
         
         # when training, use teacher forcing
         if not self.autoregressive:
-            map = self.embedding(target_map)
-            pos_embed = self.pos_embedding(torch.arange(L, dtype=torch.long).to(z.device))
+            first_token = torch.tensor([31], dtype=torch.long).to(z.device).repeat(B, 1)
+            with_first = torch.cat([first_token, target_map], dim=1)
+            map = self.embedding(with_first)
+            pos_embed = self.pos_embedding(torch.arange(L + 1, dtype=torch.long).to(z.device))
             map = map + pos_embed # [B, H * W, dim_ff]
             decoded = self.decoder(map, memory, tgt_mask=mask) # [B, H * W, dim_ff]
             output = self.fc(decoded)
@@ -44,7 +46,7 @@ class GinkaTransformerDecoder(nn.Module):
         
         # when evaling, use autoregressive generation
         else:
-            output = torch.zeros([B, L], dtype=torch.int).to(z.device)
+            output = torch.zeros([B, L + 1], dtype=torch.int).to(z.device)
             for idx in range(0, self.map_size):
                 embed = self.embedding(output)
                 pos_embed = self.pos_embedding(torch.IntTensor([idx]).repeat(B, 1).to(z.device))
@@ -77,7 +79,7 @@ class GinkaTransformerVAEDecoder(nn.Module):
     def forward(self, z: torch.Tensor, map: torch.Tensor):
         hidden = self.input(z)
         output = self.decoder(hidden, map)
-        return output[:, 0:self.map_size]
+        return output
 
 if __name__ == "__main__":
     device = torch.device("cpu")
@@ -87,7 +89,6 @@ if __name__ == "__main__":
     
     # 初始化模型
     model = GinkaTransformerVAEDecoder().to(device)
-    model.eval()
     
     print_memory("初始化后")
     
