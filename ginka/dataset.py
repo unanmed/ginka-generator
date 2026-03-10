@@ -232,8 +232,6 @@ class GinkaRNNDataset(Dataset):
         H, W = target.shape
         tag_cond = torch.FloatTensor(item['tag'])
         val_cond = torch.FloatTensor(item['val'])
-        val_cond[9] = val_cond[9] / H / W
-        val_cond[10] = val_cond[10] / H / W
 
         return {
             "tag_cond": tag_cond,

@@ -1,6 +1,7 @@
 import time
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from ..utils import print_memory
 
 class GinkaTransformerEncoder(nn.Module):
@@ -8,11 +9,11 @@ class GinkaTransformerEncoder(nn.Module):
         super().__init__()
         self.dim_ff = dim_ff
         self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=dim_ff, dim_feedforward=dim_ff, nhead=nhead, batch_first=True),
+            nn.TransformerEncoderLayer(d_model=dim_ff, dim_feedforward=dim_ff, nhead=nhead, batch_first=True, activation=F.gelu),
             num_layers=num_layers
         )
         self.decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=dim_ff, dim_feedforward=dim_ff, nhead=nhead, batch_first=True),
+            nn.TransformerDecoderLayer(d_model=dim_ff, dim_feedforward=dim_ff, nhead=nhead, batch_first=True, activation=F.gelu),
             num_layers=max(num_layers // 2, 1)
         )
         
@@ -23,7 +24,7 @@ class GinkaTransformerEncoder(nn.Module):
         x = self.encoder(x)
         x = self.decoder(first_token, x)
         return x.squeeze(1)
-    
+
 class GinkaTransformerBottleneck(nn.Module):
     def __init__(self, dim_ff=256, hidden_dim=512, latent_dim=32):
         super().__init__()
@@ -31,7 +32,7 @@ class GinkaTransformerBottleneck(nn.Module):
             nn.Linear(dim_ff, hidden_dim),
             nn.Dropout(0.3),
             nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
         )
         self.fc_mu = nn.Sequential(
             nn.Linear(hidden_dim, latent_dim)

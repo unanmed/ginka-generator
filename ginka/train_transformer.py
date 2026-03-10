@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-from .transformer_vae.vae import GinkaTransformerVAE
+from .transformer.vae import GinkaTransformerVAE
 from .vae_rnn.loss import VAELoss
 from .vae_rnn.scheduler import VAEScheduler
 from .dataset import GinkaRNNDataset
