@@ -7,7 +7,8 @@ class VAELoss:
     
     def vae_loss(self, logits, target, mu, logvar, beta=0.1):
         # target: [B, 169]
-        end_token = torch.tensor([15], dtype=torch.long).to(logits.device)
+        B, L = target.shape
+        end_token = torch.tensor([15], dtype=torch.long).to(logits.device).repeat(B, 1)
         target = torch.cat([target, end_token], dim=1)
         target = F.one_hot(target, num_classes=self.num_classes).float()
         recon_loss = F.cross_entropy(logits, target)
