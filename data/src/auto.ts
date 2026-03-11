@@ -255,10 +255,10 @@ const labelConfig: IAutoLabelConfig = {
     },
     allowedSize: [[13, 13]],
     allowUselessBranch: true,
-    maxWallDensityStd: 0.5,
+    maxWallDensityStd: 0.23,
     minEnemyRatio: 0.02,
     maxEnemyRatio: 0.3,
-    minWallRatio: 0.1,
+    minWallRatio: 0.2,
     maxWallRatio: 0.6,
     minResourceRatio: 0.02,
     maxResourceRatio: 0.3,
@@ -270,12 +270,12 @@ const labelConfig: IAutoLabelConfig = {
     maxEntryCount: 4,
     ignoreIssues: true,
     customTowerFilter: info => {
-        if (info.name !== 'Apeiria') {
-            return false;
-        }
-        // if (info.color !== TowerColor.Blue && info.color !== TowerColor.Green) {
+        // if (info.name !== 'Apeiria') {
         //     return false;
         // }
+        if (info.color !== TowerColor.Blue && info.color !== TowerColor.Green) {
+            return false;
+        }
         if (info.people < 1000) {
             return false;
         }
@@ -306,9 +306,9 @@ const labelConfig: IAutoLabelConfig = {
         if (ignoredFloor[floor.tower.name]?.includes(floor.mapId)) {
             return false;
         }
-        // if (floor.tower.name === 'Apeiria') {
-        //     return Math.random() < 0.2;
-        // }
+        if (floor.tower.name === 'Apeiria') {
+            return Math.random() < 0.2;
+        }
         return true;
     }
 };

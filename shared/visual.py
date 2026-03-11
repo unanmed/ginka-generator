@@ -63,7 +63,7 @@ def convert_dataset_to_images(
 if __name__ == "__main__":
     convert_dataset_to_images(
         json_path="data/result.json",     # 数据集文件
-        tile_folder="tiles",          # 贴图文件夹
+        tile_folder="tiles2",          # 贴图文件夹
         output_folder="map_images",  # 输出文件夹
         tile_size=32                  # tile 尺寸
     )
