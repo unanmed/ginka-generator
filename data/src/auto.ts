@@ -2,6 +2,7 @@ import { writeFile } from 'fs/promises';
 import { autoLabelTowers } from './auto/auto';
 import { IAutoLabelConfig, TowerColor } from './auto/types';
 import { GinkaDataset, GinkaTrainData } from './types';
+import { normalizeHeatmap } from './auto/heatmap';
 
 const [, , output, towerInfo, ...folders] = process.argv;
 
@@ -328,11 +329,15 @@ const labelConfig: IAutoLabelConfig = {
             const data: GinkaTrainData = {
                 map: floor.data.map,
                 size: [width, height],
-                tag: Array(64).fill(0),
+                heatmap: [
+                    normalizeHeatmap(info.wallHeatmap),
+                    normalizeHeatmap(info.enemyHeatmap),
+                    normalizeHeatmap(info.resourceHeatmap),
+                    normalizeHeatmap(info.entryHeatmap)
+                ],
                 val: [
                     info.globalDensity,
                     info.wallDensity,
-                    0,
                     info.doorDensity,
                     info.enemyDensity,
                     info.resourceDensity,
@@ -340,9 +345,10 @@ const labelConfig: IAutoLabelConfig = {
                     info.potionDensity,
                     info.keyDensity,
                     info.itemDensity,
-                    info.entryCount,
-                    info.specialDoorCount,
-                    info.fishCount,
+                    info.entryCount / width / height,
+                    0,
+                    0,
+                    0,
                     0,
                     0,
                     0

@@ -93,6 +93,15 @@ export interface IFloorInfo {
     readonly hasUselessBranch: boolean;
     /** 墙壁密度标准差 */
     readonly wallDensityStd: number;
+
+    /** 怪物热力图 */
+    readonly enemyHeatmap: number[][];
+    /** 资源热力图 */
+    readonly resourceHeatmap: number[][];
+    /** 入口热力图 */
+    readonly entryHeatmap: number[][];
+    /** 墙壁热力图 */
+    readonly wallHeatmap: number[][];
 }
 
 export interface IMapBlockConfig {

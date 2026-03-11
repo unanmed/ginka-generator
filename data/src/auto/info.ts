@@ -16,6 +16,7 @@ import {
     wallTiles
 } from '../shared';
 import { NodeType } from '../topology/interface';
+import { gaussainHeatmap, generateHeatmap } from './heatmap';
 
 interface IRawTowerInfo {
     /** 作者 id */
@@ -227,7 +228,11 @@ export function parseFloorInfo(tower: ITowerInfo, map: number[][]): IFloorInfo {
         specialDoorCount: count(flattened, specialDoorTiles),
         fishCount,
         hasUselessBranch,
-        wallDensityStd: computeWallDensityStd(map, wallTiles, 5)
+        wallDensityStd: computeWallDensityStd(map, wallTiles, 5),
+        wallHeatmap: gaussainHeatmap(generateHeatmap(map, wallTiles)),
+        enemyHeatmap: gaussainHeatmap(generateHeatmap(map, enemyTiles)),
+        resourceHeatmap: gaussainHeatmap(generateHeatmap(map, resourceTiles)),
+        entryHeatmap: gaussainHeatmap(generateHeatmap(map, entryTiles))
     };
 
     return floorInfo;

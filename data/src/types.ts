@@ -43,10 +43,11 @@ export interface GinkaConfig extends BaseConfig {
 }
 
 export interface GinkaTrainData {
-    tag: number[];
+    tag?: number[];
     val: number[];
     map: number[][];
     size: [number, number];
+    heatmap?: number[][][];
 }
 
 export interface GinkaDataset {
