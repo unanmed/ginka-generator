@@ -232,7 +232,12 @@ export function parseFloorInfo(tower: ITowerInfo, map: number[][]): IFloorInfo {
         wallHeatmap: gaussainHeatmap(generateHeatmap(map, wallTiles)),
         enemyHeatmap: gaussainHeatmap(generateHeatmap(map, enemyTiles)),
         resourceHeatmap: gaussainHeatmap(generateHeatmap(map, resourceTiles)),
-        entryHeatmap: gaussainHeatmap(generateHeatmap(map, entryTiles))
+        potionHeatmap: gaussainHeatmap(generateHeatmap(map, potionTiles)),
+        gemHeatmap: gaussainHeatmap(generateHeatmap(map, gemTiles)),
+        keyHeatmap: gaussainHeatmap(generateHeatmap(map, keyTiles)),
+        itemHeatmap: gaussainHeatmap(generateHeatmap(map, itemTiles)),
+        entryHeatmap: gaussainHeatmap(generateHeatmap(map, entryTiles)),
+        doorHeatmap: gaussainHeatmap(generateHeatmap(map, doorTiles))
     };
 
     return floorInfo;

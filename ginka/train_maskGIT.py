@@ -16,16 +16,6 @@ from .dataset import GinkaMaskGITDataset
 from shared.image import matrix_to_image_cv
 from .maskGIT.mask import MapMask
 
-# 手工标注标签定义（暂时不用）：
-# 0. 蓝海, 1. 红海, 2: 室内, 3. 野外, 4. 左右对称, 5. 上下对称, 6. 伪对称, 7. 咸鱼层,
-# 8. 剧情层, 9. 水层, 10. 爽塔, 11. Boss层, 12. 纯Boss层, 13. 多房间, 14. 多走廊, 15. 道具风
-# 16. 区域入口, 17. 区域连接, 18. 有机关门, 19. 道具层, 20. 斜向对称, 21. 左右通道, 22. 上下通道, 23. 多机关门
-# 24. 中心对称, 25. 部分对称, 26. 鱼骨
-
-# 自动标注标签定义（暂时不用）：
-# 0. 左右对称, 1. 上下对称, 2. 中心对称, 3. 斜向对称, 4. 伪对称, 5. 多房间, 6. 多走廊
-# 32. 平面塔, 33. 转换塔, 34. 道具塔
-
 # 标量值定义：
 # 0. 整体密度，非空白图块/地图面积，空白图块还包括装饰图块
 # 1. 墙体密度，墙壁/地图面积
@@ -42,12 +32,17 @@ from .maskGIT.mask import MapMask
 # 0. 空地, 1. 墙壁, 2. 门, 3. 钥匙, 4. 红宝石, 5. 蓝宝石, 6. 绿宝石, 7. 血瓶
 # 8. 道具, 9. 怪物, 10. 入口, 15. 掩码 token
 
+# 热力图定义
+# 0. 墙壁热力图, 1. 怪物热力图, 2. 资源热力图, 3. 血瓶热力图, 4. 宝石热力图, 5. 钥匙热力图
+# 6. 道具热力图, 7. 入口热力图, 8. 门热力图
+
 BATCH_SIZE = 128
 VAL_BATCH_DIVIDER = 128
 NUM_CLASSES = 16
 MASK_TOKEN = 15
 GENERATE_STEP = 8
 MAP_SIZE = 13 * 13
+HEATMAP_CHANNEL = 9
 MASK_PROBS = [0.5, 0.5] # 纯随机，分块随机
 
 device = torch.device(
@@ -78,7 +73,7 @@ def train():
     
     args = parse_arguments()
     
-    model = GinkaMaskGIT(num_classes=NUM_CLASSES).to(device)
+    model = GinkaMaskGIT(num_classes=NUM_CLASSES, heatmap_channel=HEATMAP_CHANNEL).to(device)
     masker = MapMask([0.5, 0.5])
     
     dataset = GinkaMaskGITDataset(args.train, device)

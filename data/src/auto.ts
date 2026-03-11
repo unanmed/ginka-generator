@@ -333,7 +333,12 @@ const labelConfig: IAutoLabelConfig = {
                     normalizeHeatmap(info.wallHeatmap),
                     normalizeHeatmap(info.enemyHeatmap),
                     normalizeHeatmap(info.resourceHeatmap),
-                    normalizeHeatmap(info.entryHeatmap)
+                    normalizeHeatmap(info.potionHeatmap),
+                    normalizeHeatmap(info.gemHeatmap),
+                    normalizeHeatmap(info.keyHeatmap),
+                    normalizeHeatmap(info.itemHeatmap),
+                    normalizeHeatmap(info.entryHeatmap),
+                    normalizeHeatmap(info.doorHeatmap)
                 ],
                 val: [
                     info.globalDensity,

@@ -8,6 +8,7 @@ class GinkaMaskGITCond(nn.Module):
         super().__init__()
         self.cond_fc = nn.Sequential(
             nn.Linear(cond_dim, output_dim // 2),
+            nn.Dropout(0.3),
             nn.LayerNorm(output_dim // 2),
             nn.ReLU(),
             

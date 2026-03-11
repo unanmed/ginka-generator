@@ -94,14 +94,24 @@ export interface IFloorInfo {
     /** 墙壁密度标准差 */
     readonly wallDensityStd: number;
 
+    /** 墙壁热力图 */
+    readonly wallHeatmap: number[][];
     /** 怪物热力图 */
     readonly enemyHeatmap: number[][];
     /** 资源热力图 */
     readonly resourceHeatmap: number[][];
+    /** 血瓶热力图 */
+    readonly potionHeatmap: number[][];
+    /** 宝石热力图 */
+    readonly gemHeatmap: number[][];
+    /** 钥匙热力图 */
+    readonly keyHeatmap: number[][];
+    /** 道具热力图 */
+    readonly itemHeatmap: number[][];
     /** 入口热力图 */
     readonly entryHeatmap: number[][];
-    /** 墙壁热力图 */
-    readonly wallHeatmap: number[][];
+    /** 门热力图 */
+    readonly doorHeatmap: number[][];
 }
 
 export interface IMapBlockConfig {
