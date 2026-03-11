@@ -11,12 +11,10 @@ import cv2
 import numpy as np
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-from .transformer.maskGIT import GinkaMaskGIT
-from .vae_rnn.loss import VAELoss
-from .vae_rnn.scheduler import VAEScheduler
-from .dataset import GinkaRNNDataset
+from .maskGIT.model import GinkaMaskGIT
+from .dataset import GinkaMaskGITDataset
 from shared.image import matrix_to_image_cv
-from .transformer.mask import MapMask
+from .maskGIT.mask import MapMask
 
 # 手工标注标签定义（暂时不用）：
 # 0. 蓝海, 1. 红海, 2: 室内, 3. 野外, 4. 左右对称, 5. 上下对称, 6. 伪对称, 7. 咸鱼层,
@@ -83,8 +81,8 @@ def train():
     model = GinkaMaskGIT(num_classes=NUM_CLASSES).to(device)
     masker = MapMask([0.5, 0.5])
     
-    dataset = GinkaRNNDataset(args.train, device)
-    dataset_val = GinkaRNNDataset(args.validate, device)
+    dataset = GinkaMaskGITDataset(args.train, device)
+    dataset_val = GinkaMaskGITDataset(args.validate, device)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE // VAL_BATCH_DIVIDER, shuffle=True)
     
