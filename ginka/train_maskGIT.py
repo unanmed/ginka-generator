@@ -16,6 +16,7 @@ from .vae_rnn.loss import VAELoss
 from .vae_rnn.scheduler import VAEScheduler
 from .dataset import GinkaRNNDataset
 from shared.image import matrix_to_image_cv
+from .transformer.mask import MapMask
 
 # 手工标注标签定义（暂时不用）：
 # 0. 蓝海, 1. 红海, 2: 室内, 3. 野外, 4. 左右对称, 5. 上下对称, 6. 伪对称, 7. 咸鱼层,
@@ -52,6 +53,7 @@ NUM_CLASSES = 16
 MASK_TOKEN = 15
 GENERATE_STEP = 8
 MAP_SIZE = 13 * 13
+MASK_PROBS = [0.5, 0.5] # 纯随机，分块随机
 
 device = torch.device(
     "cuda:1" if torch.cuda.is_available()
@@ -82,6 +84,7 @@ def train():
     args = parse_arguments()
     
     model = GinkaMaskGIT(num_classes=NUM_CLASSES).to(device)
+    masker = MapMask([0.5, 0.5])
     
     dataset = GinkaRNNDataset(args.train, device)
     dataset_val = GinkaRNNDataset(args.validate, device)
@@ -98,6 +101,7 @@ def train():
         name = os.path.splitext(file)[0]
         tile_dict[name] = cv2.imread(f"tiles2/{file}", cv2.IMREAD_UNCHANGED)
         
+    # 接续训练
     if args.resume:
         data_ginka = torch.load(args.state_ginka, map_location=device)
 
@@ -118,19 +122,20 @@ def train():
             B, H, W = target_map.shape
             target_map = target_map.view(B, H * W)
             
-            # 1. 随机采样掩码比例 r (遵循余弦调度效果更好)
-            r = torch.rand(B).to(device)
-            r = torch.cos(r * math.pi / 2).unsqueeze(1) # 产生更多高掩码比例的样本
+            mask = np.zeros((B, H * W))
+            for i in range(B):
+                mask[i] = masker.mask(H, W)
             
-            # 2. 生成掩码矩阵
-            masks = torch.rand(target_map.shape).to(device) < r
+            mask = torch.from_numpy(mask).to(torch.bool)
+            
+            # 掩码
             masked_input = target_map.clone()
-            masked_input[masks] = MASK_TOKEN # 填充为 [MASK] 标记
+            masked_input[mask] = MASK_TOKEN # 填充为 [MASK] 标记
             
             logits = model(masked_input, cond)
             
-            loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=1)
-            loss = (loss * masks).sum() / (masks.sum() + 1e-6)
+            loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=0.1)
+            loss = (loss * mask).sum() / (mask.sum() + 1e-6)
             
             optimizer.zero_grad()
             loss.backward()
@@ -168,19 +173,20 @@ def train():
                     B, H, W = target_map.shape
                     target_map = target_map.view(B, H * W)
                     
-                    # 1. 随机采样掩码比例 r (遵循余弦调度效果更好)
-                    r = torch.rand(B).to(device)
-                    r = torch.cos(r * math.pi / 2).unsqueeze(1) # 产生更多高掩码比例的样本
+                    mask = np.zeros((B, H * W))
+                    for i in range(B):
+                        mask[i] = masker.mask(H, W)
+                    
+                    mask = torch.from_numpy(mask).to(torch.bool)
                     
                     # 2. 生成掩码矩阵
-                    masks = torch.rand(target_map.shape).to(device) < r
                     masked_input = target_map.clone()
-                    masked_input[masks] = MASK_TOKEN # 填充为 [MASK] 标记
+                    masked_input[mask] = MASK_TOKEN # 填充为 [MASK] 标记
                     
                     logits = model(masked_input, cond)
                     
                     loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=0.1)
-                    loss = (loss * masks.view(-1)).sum() / (masks.sum() + 1e-6)
+                    loss = (loss * mask.view(-1)).sum() / (mask.sum() + 1e-6)
                     
                     val_loss_total += loss.detach()
                     
