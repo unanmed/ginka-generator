@@ -229,15 +229,17 @@ export function parseFloorInfo(tower: ITowerInfo, map: number[][]): IFloorInfo {
         fishCount,
         hasUselessBranch,
         wallDensityStd: computeWallDensityStd(map, wallTiles, 5),
-        wallHeatmap: gaussainHeatmap(generateHeatmap(map, wallTiles)),
-        enemyHeatmap: gaussainHeatmap(generateHeatmap(map, enemyTiles)),
-        resourceHeatmap: gaussainHeatmap(generateHeatmap(map, resourceTiles)),
-        potionHeatmap: gaussainHeatmap(generateHeatmap(map, potionTiles)),
-        gemHeatmap: gaussainHeatmap(generateHeatmap(map, gemTiles)),
-        keyHeatmap: gaussainHeatmap(generateHeatmap(map, keyTiles)),
-        itemHeatmap: gaussainHeatmap(generateHeatmap(map, itemTiles)),
-        entryHeatmap: gaussainHeatmap(generateHeatmap(map, entryTiles)),
-        doorHeatmap: gaussainHeatmap(generateHeatmap(map, doorTiles))
+        wallHeatmap: gaussainHeatmap(generateHeatmap(map, wallTiles, 1)),
+        enemyHeatmap: gaussainHeatmap(generateHeatmap(map, enemyTiles, 1)),
+        resourceHeatmap: gaussainHeatmap(
+            generateHeatmap(map, resourceTiles, 1)
+        ),
+        potionHeatmap: gaussainHeatmap(generateHeatmap(map, potionTiles, 1)),
+        gemHeatmap: gaussainHeatmap(generateHeatmap(map, gemTiles, 1)),
+        keyHeatmap: gaussainHeatmap(generateHeatmap(map, keyTiles, 1)),
+        itemHeatmap: gaussainHeatmap(generateHeatmap(map, itemTiles, 1)),
+        entryHeatmap: gaussainHeatmap(generateHeatmap(map, entryTiles, 1)),
+        doorHeatmap: gaussainHeatmap(generateHeatmap(map, doorTiles, 1))
     };
 
     return floorInfo;

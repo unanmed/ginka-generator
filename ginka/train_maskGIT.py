@@ -43,6 +43,7 @@ MASK_TOKEN = 15
 GENERATE_STEP = 8
 MAP_SIZE = 13 * 13
 HEATMAP_CHANNEL = 9
+LABEL_SMOOTHING = 0.1
 MASK_PROBS = [0.5, 0.5] # 纯随机，分块随机
 
 device = torch.device(
@@ -129,7 +130,7 @@ def train():
             
             logits = model(masked_input, cond, heatmap)
             
-            loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=0.1)
+            loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=LABEL_SMOOTHING)
             loss = (loss * mask).sum() / (mask.sum() + 1e-6)
             
             optimizer.zero_grad()
@@ -181,7 +182,7 @@ def train():
                     
                     logits = model(masked_input, cond, heatmap)
                     
-                    loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=0.1)
+                    loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=LABEL_SMOOTHING)
                     loss = (loss * mask).sum() / (mask.sum() + 1e-6)
                     
                     val_loss_total += loss.detach()
