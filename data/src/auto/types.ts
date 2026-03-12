@@ -183,6 +183,10 @@ export interface IAutoLabelConfig {
 
     /** 最大墙壁密度标准差，用于描述一个地图墙壁分布是否均匀的，较大的时候可能是特殊地图，不符合要求 */
     readonly maxWallDensityStd: number;
+    /** 热力图统计算子 */
+    readonly heatmapKernel: number;
+    /** 热力图高斯模糊的标准差 */
+    readonly guassainRadius: number;
 
     /** 是否忽略问题 */
     readonly ignoreIssues: boolean;

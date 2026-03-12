@@ -268,6 +268,8 @@ const labelConfig: IAutoLabelConfig = {
     maxFishCount: 2,
     minEntryCount: 1,
     maxEntryCount: 4,
+    guassainRadius: 2,
+    heatmapKernel: 3,
     ignoreIssues: true,
     customTowerFilter: info => {
         // if (info.name !== 'Apeiria') {

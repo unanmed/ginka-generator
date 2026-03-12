@@ -1,5 +1,5 @@
 import { readFile } from 'fs/promises';
-import { IFloorInfo, ITowerInfo, TowerColor } from './types';
+import { IAutoLabelConfig, IFloorInfo, ITowerInfo, TowerColor } from './types';
 import { buildTopologicalGraph } from '../topology/graph';
 import {
     commonDoorTiles,
@@ -153,7 +153,11 @@ export function computeWallDensityStd(
  * @param tower 地图所属塔信息
  * @param map 地图矩阵
  */
-export function parseFloorInfo(tower: ITowerInfo, map: number[][]): IFloorInfo {
+export function parseFloorInfo(
+    tower: ITowerInfo,
+    map: number[][],
+    config: IAutoLabelConfig
+): IFloorInfo {
     const topo = buildTopologicalGraph(map);
     const flattened = map.flat();
     const area = flattened.length;
@@ -229,17 +233,42 @@ export function parseFloorInfo(tower: ITowerInfo, map: number[][]): IFloorInfo {
         fishCount,
         hasUselessBranch,
         wallDensityStd: computeWallDensityStd(map, wallTiles, 5),
-        wallHeatmap: gaussainHeatmap(generateHeatmap(map, wallTiles, 1)),
-        enemyHeatmap: gaussainHeatmap(generateHeatmap(map, enemyTiles, 1)),
-        resourceHeatmap: gaussainHeatmap(
-            generateHeatmap(map, resourceTiles, 1)
+        wallHeatmap: gaussainHeatmap(
+            generateHeatmap(map, wallTiles, config.heatmapKernel),
+            config.guassainRadius
         ),
-        potionHeatmap: gaussainHeatmap(generateHeatmap(map, potionTiles, 1)),
-        gemHeatmap: gaussainHeatmap(generateHeatmap(map, gemTiles, 1)),
-        keyHeatmap: gaussainHeatmap(generateHeatmap(map, keyTiles, 1)),
-        itemHeatmap: gaussainHeatmap(generateHeatmap(map, itemTiles, 1)),
-        entryHeatmap: gaussainHeatmap(generateHeatmap(map, entryTiles, 1)),
-        doorHeatmap: gaussainHeatmap(generateHeatmap(map, doorTiles, 1))
+        enemyHeatmap: gaussainHeatmap(
+            generateHeatmap(map, enemyTiles, config.heatmapKernel),
+            config.guassainRadius
+        ),
+        resourceHeatmap: gaussainHeatmap(
+            generateHeatmap(map, resourceTiles, config.heatmapKernel),
+            config.guassainRadius
+        ),
+        potionHeatmap: gaussainHeatmap(
+            generateHeatmap(map, potionTiles, config.heatmapKernel),
+            config.guassainRadius
+        ),
+        gemHeatmap: gaussainHeatmap(
+            generateHeatmap(map, gemTiles, config.heatmapKernel),
+            config.guassainRadius
+        ),
+        keyHeatmap: gaussainHeatmap(
+            generateHeatmap(map, keyTiles, config.heatmapKernel),
+            config.guassainRadius
+        ),
+        itemHeatmap: gaussainHeatmap(
+            generateHeatmap(map, itemTiles, config.heatmapKernel),
+            config.guassainRadius
+        ),
+        entryHeatmap: gaussainHeatmap(
+            generateHeatmap(map, entryTiles, config.heatmapKernel),
+            config.guassainRadius
+        ),
+        doorHeatmap: gaussainHeatmap(
+            generateHeatmap(map, doorTiles, config.heatmapKernel),
+            config.guassainRadius
+        )
     };
 
     return floorInfo;

@@ -44,6 +44,7 @@ GENERATE_STEP = 8
 MAP_SIZE = 13 * 13
 HEATMAP_CHANNEL = 9
 LABEL_SMOOTHING = 0.1
+RAND_RATIO = 0.1
 MASK_PROBS = [0.5, 0.5] # 纯随机，分块随机
 
 device = torch.device(
@@ -114,7 +115,7 @@ def train():
             B, H, W = target_map.shape
 
             target_map = target_map.view(B, H * W)
-            rand = torch.randn_like(heatmap).to(device) * 0.05
+            rand = torch.randn_like(heatmap).to(device) * RAND_RATIO
             if random.random() > 0.5:
                 heatmap = heatmap + rand
             
