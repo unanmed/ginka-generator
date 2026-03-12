@@ -89,9 +89,9 @@ def train():
 
     # 用于生成图片
     tile_dict = dict()
-    for file in os.listdir('tiles2'):
+    for file in os.listdir('tiles'):
         name = os.path.splitext(file)[0]
-        tile_dict[name] = cv2.imread(f"tiles2/{file}", cv2.IMREAD_UNCHANGED)
+        tile_dict[name] = cv2.imread(f"tiles/{file}", cv2.IMREAD_UNCHANGED)
     
     # 接续训练
     if args.resume:

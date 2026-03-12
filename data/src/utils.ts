@@ -1,7 +1,6 @@
 import { readFile } from 'fs-extra';
 import { join } from 'path';
 import { BaseConfig, GinkaConfig, TowerInfo } from './types';
-import { convertFloor } from './floor';
 
 export interface DatasetMergable<T> {
     datasetId: number;
@@ -77,95 +76,12 @@ export async function parseTowerInfo(
     };
 }
 
-export async function getAllFloors(...info: TowerInfo[]) {
-    const floorData = await Promise.all(
-        info.map(async tower => {
-            // 获取必要信息
-            const enemyFile = await readFile(
-                join(tower.path, 'enemys.js'),
-                'utf-8'
-            );
-            const mapFile = await readFile(
-                join(tower.path, 'maps.js'),
-                'utf-8'
-            );
-            const enemyMap = JSON.parse(
-                enemyFile.split('\n').slice(1).join('\n')
-            ) as Record<string, any>;
-            const mapData = JSON.parse(
-                mapFile.split('\n').slice(1).join('\n')
-            ) as Record<number, any>;
-            const enemyNumMap: Record<number, any> = {};
-            // 将怪物转化为数字映射
-            for (const [key, value] of Object.entries(mapData)) {
-                if (value.cls === 'enemys') {
-                    enemyNumMap[parseInt(key)] = enemyMap[value.id];
-                }
-            }
-
-            return Promise.all(
-                tower.floorIds.map(async id => {
-                    const floorFile = await readFile(
-                        join(tower.path, 'floors', `${id}.js`),
-                        'utf-8'
-                    );
-                    try {
-                        const data = JSON.parse(
-                            floorFile
-                                // .replaceAll("'", '"')
-                                .slice(floorFile.indexOf('=') + 1)
-                        );
-
-                        const map = data.map as number[][];
-                        // 裁剪地图
-                        const { clip } = tower.config;
-                        const area = clip.special[id] ?? clip.defaults;
-
-                        return convertFloor(
-                            map,
-                            area,
-                            tower.config as GinkaConfig,
-                            enemyNumMap
-                        );
-                    } catch (e) {
-                        console.log(
-                            `Error when processing '${tower.name}' '${id}'`
-                        );
-                        throw e;
-                    }
-                })
-            );
-        })
-    );
-    const maps: Map<string, FloorData> = new Map();
-    floorData.forEach((tower, tid) => {
-        const name = info[tid].name;
-        tower.forEach((map, mid) => {
-            const floorId = info[tid].floorIds[mid];
-            maps.set(`${name}::${floorId}`, {
-                map,
-                id: floorId,
-                config: info[tid].config
-            });
-        });
-    });
-    return maps;
-}
-
 export function mergeFloorIds(...info: TowerInfo[]) {
     const ids: string[] = [];
     info.forEach(v => {
         ids.push(...v.floorIds.map(id => `${v.name}:${id}`));
     });
     return ids;
-}
-
-export async function readOne(path: string) {
-    if (path.endsWith('.json')) {
-        return fromJSON(path);
-    } else {
-        return getAllFloors(await parseTowerInfo(path, 'minamo-config.json'));
-    }
 }
 
 export async function fromJSON(path: string) {
