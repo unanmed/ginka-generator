@@ -9,8 +9,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 import cv2
 import numpy as np
-from torch_geometric.loader import DataLoader
 from tqdm import tqdm
+from torch.utils.data import DataLoader
 from .maskGIT.model import GinkaMaskGIT
 from .dataset import GinkaMaskGITDataset
 from shared.image import matrix_to_image_cv
@@ -61,7 +61,7 @@ disable_tqdm = not sys.stdout.isatty()
 def parse_arguments():
     parser = argparse.ArgumentParser(description="training codes")
     parser.add_argument("--resume", type=bool, default=False)
-    parser.add_argument("--state_ginka", type=str, default="result/vae/ginka-100.pth")
+    parser.add_argument("--state_ginka", type=str, default="result/transformer/ginka-100.pth")
     parser.add_argument("--train", type=str, default="ginka-dataset.json")
     parser.add_argument("--validate", type=str, default="ginka-eval.json")
     parser.add_argument("--epochs", type=int, default=100)

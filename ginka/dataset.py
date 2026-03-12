@@ -1,12 +1,6 @@
 import json
-import math
-import random
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset
-import torch
-import torch.nn.functional as F
-from typing import List
 
 def load_data(path: str):
     with open(path, 'r', encoding="utf-8") as f:

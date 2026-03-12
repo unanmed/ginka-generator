@@ -1,5 +1,4 @@
 import random
-import torch
 import numpy as np
 from scipy.ndimage import binary_dilation, binary_erosion
 

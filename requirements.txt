@@ -1,7 +1,7 @@
 torch
-torchvision
-torchaudio
 tqdm
 torch-geometric
 transformers
-torch-scatter
+scipy
+numpy
+cv2
