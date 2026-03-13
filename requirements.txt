@@ -5,3 +5,4 @@ transformers
 scipy
 numpy
 cv2
+perlin-noise

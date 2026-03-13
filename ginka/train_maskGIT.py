@@ -44,6 +44,8 @@ GENERATE_STEP = 8
 MAP_SIZE = 13 * 13
 HEATMAP_CHANNEL = 9
 LABEL_SMOOTHING = 0
+BLUR_MIN_SIZE = 3
+BLUR_MAX_SIZE = 6
 RAND_RATIO = 0.1
 MASK_PROBS = [0.5, 0.5] # 纯随机，分块随机
 
@@ -78,13 +80,12 @@ def train():
     model = GinkaMaskGIT(num_classes=NUM_CLASSES, heatmap_channel=HEATMAP_CHANNEL).to(device)
     masker = MapMask([0.5, 0.5])
     
-    dataset = GinkaMaskGITDataset(args.train, device)
-    dataset_val = GinkaMaskGITDataset(args.validate, device)
+    dataset = GinkaMaskGITDataset(args.train, sigma_rand=RAND_RATIO, blur_min=BLUR_MIN_SIZE, blur_max=BLUR_MAX_SIZE)
+    dataset_val = GinkaMaskGITDataset(args.validate, sigma_rand=RAND_RATIO, blur_min=BLUR_MIN_SIZE, blur_max=BLUR_MAX_SIZE)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE // VAL_BATCH_DIVIDER, shuffle=True)
     
     optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-2)
-    # 自定义调度器允许在 self_prob 提高时重置调度器信息并提高学习率以适应学习
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     # 用于生成图片
@@ -104,8 +105,8 @@ def train():
                 optimizer.load_state_dict(data_ginka["optim_state"])
     
         print("Train from loaded state.")
-        
-    for epoch in tqdm(range(args.epochs), desc="VAE Training", disable=disable_tqdm):
+    
+    for epoch in tqdm(range(args.epochs), desc="MaskGIT Training", disable=disable_tqdm):
         loss_total = torch.Tensor([0]).to(device)
         
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
@@ -115,9 +116,6 @@ def train():
             B, H, W = target_map.shape
 
             target_map = target_map.view(B, H * W)
-            rand = torch.randn_like(heatmap).to(device) * RAND_RATIO
-            if random.random() > 0.5:
-                heatmap = heatmap + rand
             
             mask = np.zeros((B, H * W))
             for i in range(B):
@@ -163,7 +161,7 @@ def train():
                 gap = 5
                 color = (255, 255, 255)  # 白色
                 vline = np.full((416, gap, 3), color, dtype=np.uint8)  # 垂直分割线
-                for batch in tqdm(dataloader_val, desc="Validating generator.", leave=False, disable=disable_tqdm):
+                for batch in tqdm(dataloader_val, desc="Validating", leave=False, disable=disable_tqdm):
                     # 1. 常规生成
                     target_map = batch["target_map"].to(device)
                     cond = batch["cond"].to(device)
@@ -226,7 +224,8 @@ def train():
                             break
                         
                     generated_img = matrix_to_image_cv(map.view(B, H, W)[0].cpu().numpy(), tile_dict)
-                    cv2.imwrite(f"result/transformer_img/g-{idx}.png", generated_img)
+                    img = np.block([[real_img], [vline], [generated_img]])
+                    cv2.imwrite(f"result/transformer_img/g-{idx}.png", img)
                     
             avg_loss_val = val_loss_total.item() / len(dataloader_val)
             tqdm.write(

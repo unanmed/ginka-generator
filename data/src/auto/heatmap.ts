@@ -8,6 +8,7 @@ export function generateHeatmap(
     tokens: Set<number>,
     kernel: number = 5
 ): number[][] {
+    if (kernel === 0) return map.map(v => v.slice());
     if (kernel % 2 !== 1) {
         throw new Error(`Kernal size must be odd.`);
     }
@@ -44,6 +45,7 @@ export function generateHeatmap(
  * @param sigma 标准差
  */
 export function gaussainHeatmap(map: number[][], sigma: number = 1) {
+    if (sigma === 0) return map.map(v => v.slice());
     const radius = sigma * 3;
     const width = map[0].length;
     const height = map.length;
