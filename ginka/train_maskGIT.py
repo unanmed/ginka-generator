@@ -48,6 +48,8 @@ BLUR_MIN_SIZE = 3
 BLUR_MAX_SIZE = 9
 RAND_RATIO = 0.15
 MASK_PROBS = [0.5, 0.5] # 纯随机，分块随机
+NUM_LAYERS = 4
+D_MODEL = 128
 
 device = torch.device(
     "cuda:1" if torch.cuda.is_available()
@@ -77,7 +79,7 @@ def train():
     
     args = parse_arguments()
     
-    model = GinkaMaskGIT(num_classes=NUM_CLASSES, heatmap_channel=HEATMAP_CHANNEL, num_layers=3, d_model=128).to(device)
+    model = GinkaMaskGIT(num_classes=NUM_CLASSES, heatmap_channel=HEATMAP_CHANNEL, num_layers=NUM_LAYERS, d_model=D_MODEL).to(device)
     masker = MapMask([0.5, 0.5])
     
     dataset = GinkaMaskGITDataset(args.train, sigma_rand=RAND_RATIO, blur_min=BLUR_MIN_SIZE, blur_max=BLUR_MAX_SIZE)
