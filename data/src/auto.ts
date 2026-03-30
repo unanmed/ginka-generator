@@ -254,14 +254,16 @@ const labelConfig: IAutoLabelConfig = {
         entry: 10
     },
     allowedSize: [[13, 13]],
-    allowUselessBranch: true,
-    maxWallDensityStd: 0.23,
+    allowUselessBranch: false,
+    maxWallDensityStd: 1,
+    maxEmptyArea: 8,
+    maxResourceArea: 8,
     minEnemyRatio: 0.02,
     maxEnemyRatio: 0.3,
     minWallRatio: 0.2,
     maxWallRatio: 0.6,
-    minResourceRatio: 0.02,
-    maxResourceRatio: 0.3,
+    minResourceRatio: 0.05,
+    maxResourceRatio: 0.25,
     minDoorRatio: 0,
     maxDoorRatio: 0.12,
     minFishCount: 0,
@@ -269,15 +271,15 @@ const labelConfig: IAutoLabelConfig = {
     minEntryCount: 1,
     maxEntryCount: 4,
     guassainRadius: 0,
-    heatmapKernel: 0,
+    heatmapKernel: 1,
     ignoreIssues: true,
     customTowerFilter: info => {
         // if (info.name !== 'Apeiria') {
         //     return false;
         // }
-        if (info.color !== TowerColor.Blue && info.color !== TowerColor.Green) {
-            return false;
-        }
+        // if (info.color !== TowerColor.Blue && info.color !== TowerColor.Green) {
+        //     return false;
+        // }
         if (info.people < 1000) {
             return false;
         }
@@ -290,26 +292,26 @@ const labelConfig: IAutoLabelConfig = {
         if (info.name.startsWith('24') && info.name.length > 2) {
             return false;
         }
-        if (ignoredTower.includes(info.name)) {
-            return false;
-        }
+        // if (ignoredTower.includes(info.name)) {
+        //     return false;
+        // }
         return true;
     },
     customFloorFilter: floor => {
-        if (floor.info.topo.graphs.length > 1) {
+        if (floor.info.topo.graph.areas.size > 1) {
             return false;
         }
         if (floor.data.hasCannotInOut) {
             return false;
         }
-        if (floor.info.topo.unreachable.size > 0) {
+        if (floor.info.topo.graph.unreachableArea.size > 0) {
             return false;
         }
         if (ignoredFloor[floor.tower.name]?.includes(floor.mapId)) {
             return false;
         }
         if (floor.tower.name === 'Apeiria') {
-            return Math.random() < 0.2;
+            return Math.random() < 0.1;
         }
         return true;
     }

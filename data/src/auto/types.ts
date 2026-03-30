@@ -1,4 +1,4 @@
-import { GinkaTopologicalGraphs } from 'src/topology/interface';
+import { GinkaTopologicalGraphs } from '../topology/interface';
 
 export const enum TowerColor {
     White,
@@ -62,7 +62,11 @@ export interface IFloorInfo {
     /** 楼层所属的塔信息 */
     readonly tower: ITowerInfo;
     /** 楼层拓扑图 */
-    readonly topo: GinkaTopologicalGraphs;
+    readonly topo: IMapTopology;
+    /** 最大空地面积 */
+    readonly maxEmptyArea: number;
+    /** 最大资源区域面积 */
+    readonly maxResourceArea: number;
     /** 地图矩阵 */
     readonly map: number[][];
     /** 地图整体密度，非空白图块/地图面积 */
@@ -87,9 +91,7 @@ export interface IFloorInfo {
     readonly entryCount: number;
     /** 机关门数量 */
     readonly specialDoorCount: number;
-    /** 咸鱼门数量，多层咸鱼门算一个 */
-    readonly fishCount: number;
-    /** 是否包含只连接了一个节点的分支节点。这种节点相当于门或怪物后面什么都不加，多数是无用的。 */
+    /** 是否包含只连接了一个节点的空白节点。这种节点相当于门或怪物后面什么都不加，多数是无用的。 */
     readonly hasUselessBranch: boolean;
     /** 墙壁密度标准差 */
     readonly wallDensityStd: number;
@@ -183,6 +185,10 @@ export interface IAutoLabelConfig {
 
     /** 最大墙壁密度标准差，用于描述一个地图墙壁分布是否均匀的，较大的时候可能是特殊地图，不符合要求 */
     readonly maxWallDensityStd: number;
+    /** 最大空地区域面积，超过这个的地图会忽略 */
+    readonly maxEmptyArea: number;
+    /** 最大资源区域面积，超过这个的地图会忽略 */
+    readonly maxResourceArea: number;
     /** 热力图统计算子 */
     readonly heatmapKernel: number;
     /** 热力图高斯模糊的标准差 */
@@ -260,15 +266,195 @@ export interface INeededFloorData {
     readonly fgmap?: number[][];
     readonly fg2map?: number[][];
     readonly changeFloor: Record<string, unknown>;
+    readonly events?: Record<string, any[] | { readonly noPass: boolean }>;
+    readonly cannotMove?: ('left' | 'right' | 'up' | 'down')[];
+    readonly cannotMoveIn?: ('left' | 'right' | 'up' | 'down')[];
 }
 
 export interface ICodeRunResult {
     issue: string[];
     data: INeededCoreData;
     enemy: Record<string, INeededEnemyData>;
+    /** Tile 数字到其内容的映射 */
     map: Record<number, INeededMapData>;
     item: Record<string, INeededItemData>;
     main: {
         floors: Record<string, INeededFloorData>;
     };
+}
+
+export const enum CannotInOut {
+    /** 左侧不可入 / 不可出 */
+    Left = 0b0001,
+    /** 上侧不可入 / 不可出 */
+    Top = 0b0010,
+    /** 右侧不可入 / 不可出 */
+    Right = 0b0100,
+    /** 下侧不可入 / 不可出 */
+    Bottom = 0b1000
+}
+
+export const enum GraphNodeType {
+    Empty,
+    /** 资源节点，由资源组成 */
+    Resource,
+    /** 分支节点，由门或怪物组成 */
+    Branch,
+    /** 入口节点 */
+    Entry,
+    /** 墙 */
+    Wall
+}
+
+export const enum ResourceType {
+    Hp,
+    Atk,
+    Def,
+    Mdef,
+    Item,
+    Key
+}
+
+export const enum BranchType {
+    Door,
+    Enemy
+}
+
+export interface IMapGraphNodeBase {
+    /** 节点类型 */
+    readonly type: GraphNodeType;
+    /** 当前节点在拓扑图中的索引 */
+    readonly index: number;
+    /** 此节点包含的所有地图坐标 */
+    readonly tiles: Set<number>;
+    /** 当前节点的邻居节点 */
+    readonly neighbors: Set<MapGraphNode>;
+}
+
+export interface IEmptyMapGraphNode extends IMapGraphNodeBase {
+    readonly type: GraphNodeType.Empty;
+}
+
+export interface IResourceMapGraphNode extends IMapGraphNodeBase {
+    readonly type: GraphNodeType.Resource;
+    /** 节点包含的资源数量 */
+    readonly resources: Map<ResourceType, number>;
+}
+
+export interface IBranchMapGraphNode extends IMapGraphNodeBase {
+    readonly type: GraphNodeType.Branch;
+    /** 分支节点类型 */
+    readonly branch: BranchType;
+}
+
+export interface IEntryMapGraphNode extends IMapGraphNodeBase {
+    readonly type: GraphNodeType.Entry;
+}
+
+export type MapGraphNode =
+    | IEmptyMapGraphNode
+    | IResourceMapGraphNode
+    | IBranchMapGraphNode
+    | IEntryMapGraphNode;
+
+export interface IMapGraphArea {
+    /** 当前区域包含的所有节点 */
+    readonly nodes: Set<MapGraphNode>;
+}
+
+export interface IMapGraph {
+    /** 不可到达的区域 */
+    readonly unreachableArea: Set<IMapGraphArea>;
+    /** 当前拓扑图包含的区域信息 */
+    readonly areas: Set<IMapGraphArea>;
+    /** 当前拓扑图的所有入口 */
+    readonly entries: Set<IEntryMapGraphNode>;
+    /** 坐标至其所在节点的映射，可以根据坐标获取其对应的节点 */
+    readonly nodeMap: Map<number, MapGraphNode>;
+}
+
+export interface IMapTopology {
+    /** 原始地图 */
+    readonly originMap: number[][];
+    /** 事件层除外的层的地图 */
+    readonly otherLayersMap: number[][][];
+    /** 经过转换的地图 */
+    readonly convertedMap: number[][];
+    /** 不可通行标记 */
+    readonly noPass: boolean[][];
+    /** 不可入标记 */
+    readonly cannotIn: number[][];
+    /** 不可出标记 */
+    readonly cannotOut: number[][];
+    /** 地图的拓扑图 */
+    readonly graph: IMapGraph;
+
+    /**
+     * 判断一个点是否连接至任意一个入口节点，数字表示 y * width + x
+     * @param pos 需要判断的点
+     * @param ignoredNode 路径中不允许通过的节点
+     */
+    connectedToAnyEntry(
+        pos: number,
+        ignoredNode?: (MapGraphNode | number)[]
+    ): boolean;
+
+    /**
+     * 判断一个点是否连接至指定的入口节点，数字表示 y * width + x
+     * @param pos 需要判断的点
+     * @param entry 指定入口
+     * @param ignoredNode 路径中不允许通过的节点
+     */
+    connectedToSpecificEntry(
+        pos: number,
+        entry: number | IEntryMapGraphNode,
+        ignoredNode?: (MapGraphNode | number)[]
+    ): boolean;
+}
+
+export interface IMapTileConverter {
+    /**
+     * 根据地图原始图块，获取对应的标签图块
+     * @param tile 地图原始图块
+     */
+    getLabeledTile(tile: number): number;
+
+    isEmpty(tile: number): boolean;
+
+    isEntry(tile: number, x: number, y: number, floorId: string): boolean;
+
+    isDoor(tile: number): boolean;
+
+    isEnemy(tile: number): boolean;
+
+    isResource(tile: number): boolean;
+
+    /**
+     * 获取指定原始图块在指定位置的通行信息
+     * @param tile 地图原始图块
+     * @param x 图块所在位置
+     * @param y 图块所在位置
+     */
+    getNoPass(tile: number, x: number, y: number): boolean;
+
+    /**
+     * 获取指定原始图块在指定位置的不可入信息
+     * @param tile 地图原始图块
+     * @param x 图块所在位置
+     * @param y 图块所在位置
+     */
+    getCannotIn(tile: number, x: number, y: number): number;
+
+    /**
+     * 获取指定原始图块在指定位置的不可出信息
+     * @param tile 地图原始图块
+     * @param x 图块所在位置
+     * @param y 图块所在位置
+     */
+    getCannotOut(tile: number, x: number, y: number): number;
+
+    /**
+     * 获取指定图块所包含的资源
+     */
+    getResource(tile: number, x: number, y: number): Map<ResourceType, number>;
 }

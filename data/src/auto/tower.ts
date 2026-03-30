@@ -1,3 +1,4 @@
+import { IMapTileConverter, ResourceType } from './types';
 import {
     IAutoLabelConfig,
     ICodeRunResult,
@@ -26,6 +27,8 @@ export function runTowerCode(project: string, floors: string): ICodeRunResult {
         result.item = items_296f5d02_12fd_4166_a7c1_b5e830c9ee3a;
     `;
     const main = result.main!;
+    const log = console.log;
+    console.log = () => {};
     try {
         eval(projectCode);
         eval(floors);
@@ -35,17 +38,15 @@ export function runTowerCode(project: string, floors: string): ICodeRunResult {
     } catch {
         result.issue?.push(`代码运行错误`);
     }
+    console.log = log;
     return result as ICodeRunResult;
-}
-
-function edge(x: number, y: number, width: number, height: number) {
-    return x === 0 || y === 0 || x === width - 1 || y === height - 1;
 }
 
 export function convertTowerMap(
     result: ICodeRunResult,
     floor: INeededFloorData,
-    config: IAutoLabelConfig
+    config: IAutoLabelConfig,
+    converter: IMapTileConverter
 ): IConvertedMap {
     const width = floor.map[0].length;
     const height = floor.map.length;
@@ -72,48 +73,6 @@ export function convertTowerMap(
         def: 0,
         mdef: 0
     };
-
-    const thisMap = {
-        ratio: 1
-    };
-
-    // 给后面的 eval 用的
-    const core = {
-        values: new Proxy(result.data.values, {
-            set() {
-                // 防止被修改
-                return true;
-            }
-        }),
-        status: {
-            hero: new Proxy(heroStatus, {
-                set(target, p: string, newValue) {
-                    if (typeof newValue !== 'number') return true;
-                    if (
-                        p !== 'hp' &&
-                        p !== 'atk' &&
-                        p !== 'def' &&
-                        p !== 'mdef'
-                    ) {
-                        return true;
-                    }
-                    target[p] = newValue;
-                    return true;
-                }
-            }),
-            thisMap: new Proxy(thisMap, {
-                set() {
-                    // 防止被修改
-                    return true;
-                }
-            })
-        }
-    };
-
-    core.status.hero.hp = 0;
-    core.status.hero.atk = 0;
-    core.status.hero.def = 0;
-    core.status.hero.mdef = 0;
 
     const tiles = config.classes;
 
@@ -188,17 +147,11 @@ export function convertTowerMap(
                     continue;
                 }
                 // 执行道具效果
-                if (item.cls === 'items' && item.itemEffect) {
-                    try {
-                        eval(item.itemEffect);
-                    } catch {
-                        // 执行失败就清空一下防止被误识别为宝石血瓶
-                        heroStatus.hp = 0;
-                        heroStatus.atk = 0;
-                        heroStatus.def = 0;
-                        heroStatus.mdef = 0;
-                    }
-                }
+                const effect = converter.getResource(num, nx, ny);
+                heroStatus.hp = effect.get(ResourceType.Hp) ?? 0;
+                heroStatus.atk = effect.get(ResourceType.Atk) ?? 0;
+                heroStatus.def = effect.get(ResourceType.Def) ?? 0;
+                heroStatus.mdef = effect.get(ResourceType.Mdef) ?? 0;
                 const arr: [number, number, number, number] = [
                     heroStatus.hp,
                     heroStatus.atk,

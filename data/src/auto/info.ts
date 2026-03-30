@@ -1,8 +1,13 @@
 import { readFile } from 'fs/promises';
-import { IAutoLabelConfig, IFloorInfo, ITowerInfo, TowerColor } from './types';
-import { buildTopologicalGraph } from '../topology/graph';
 import {
-    commonDoorTiles,
+    GraphNodeType,
+    IAutoLabelConfig,
+    IFloorInfo,
+    IMapTileConverter,
+    ITowerInfo,
+    TowerColor
+} from './types';
+import {
     doorTiles,
     enemyTiles,
     entryTiles,
@@ -15,8 +20,8 @@ import {
     specialDoorTiles,
     wallTiles
 } from '../shared';
-import { NodeType } from '../topology/interface';
 import { gaussainHeatmap, generateHeatmap } from './heatmap';
+import { MapTopology } from './topo';
 
 interface IRawTowerInfo {
     /** 作者 id */
@@ -155,61 +160,70 @@ export function computeWallDensityStd(
  */
 export function parseFloorInfo(
     tower: ITowerInfo,
+    originMap: number[][],
     map: number[][],
-    config: IAutoLabelConfig
+    otherLayers: number[][][],
+    config: IAutoLabelConfig,
+    converter: IMapTileConverter,
+    floorId: string
 ): IFloorInfo {
-    const topo = buildTopologicalGraph(map);
+    const topo = new MapTopology(
+        floorId,
+        originMap,
+        map,
+        otherLayers,
+        converter,
+        config.classes
+    );
     const flattened = map.flat();
     const area = flattened.length;
 
     let hasUselessBranch = false;
 
-    // 统计咸鱼门数量
-    let fishCount = 0;
-    topo.graphs.forEach(graph => {
-        // 其实就是判断纯血瓶钥匙的资源节点的邻居是不是全都是门，是的话就判定为咸鱼门
-        // 这么做虽然会有一定的误差，但是也大差不差了
-        // 两个门对一个也判定为一个咸鱼门
-        graph.areaMap.forEach(v => {
-            const res = [...v.resources.entries()];
-            const onlyPotion = res.every(([tile, value]) => {
-                if (!potionTiles.has(tile) && !keyTiles.has(tile)) {
-                    return value <= 0;
-                }
-                return true;
-            });
-            if (!onlyPotion) {
-                // 包含血瓶钥匙之外的不考虑
-                return;
-            }
-
-            let branchCount = 0;
-            let noneBranchCount = 0;
-
-            v.neighbor.forEach(value => {
-                const node = graph.graph.get(value);
-                if (!node) {
-                    noneBranchCount++;
-                    return;
-                }
-
-                if (node.type === NodeType.Branch) {
-                    if (!commonDoorTiles.has(node.tile)) {
-                        branchCount++;
+    // 统计拓扑图信息
+    let maxEmptyArea = 0;
+    let maxResourceArea = 0;
+    topo.graph.areas.forEach(area => {
+        area.nodes.forEach(v => {
+            if (v.type === GraphNodeType.Empty) {
+                let branchConnection = 0;
+                v.neighbors.forEach(v => {
+                    // 对节点的每个邻居遍历，如果邻居是分支节点，且直接相连的分支节点数小于 2，
+                    // 说明这个连接可能会导致无用节点
+                    // 至于为什么要多一次额外的邻居节点判断：
+                    // |---|---|---|---|---|
+                    // | W | W | D | W | W |
+                    // |---|---|---|---|---|
+                    // | W |   | E |   | W |
+                    // |---|---|---|---|---|
+                    // | W | W | D | W | W |
+                    // |---|---|---|---|---|
+                    if (v.type === GraphNodeType.Branch) {
+                        let directBranch = 0;
+                        for (const n of v.neighbors) {
+                            if (n.type === GraphNodeType.Branch) {
+                                directBranch++;
+                            }
+                        }
+                        if (directBranch < 2) {
+                            branchConnection++;
+                        }
                     }
-                } else {
-                    noneBranchCount++;
-                }
-            });
-            if (noneBranchCount >= 0 && branchCount === 0) {
-                fishCount++;
-            }
-        });
-
-        graph.graph.forEach(v => {
-            if (v.type === NodeType.Branch) {
-                if (v.neighbor.size === 1) {
+                });
+                // 如果连接的分支数与邻居数相同，且小于等于 0，说明是门或怪物后面连接了一整片空地，是无用分支
+                // 如果连接的分支数与邻居数不相同，说明可能连接了资源节点、入口节点等，这些显然不应该算入无用分支
+                if (
+                    branchConnection <= 1 &&
+                    v.neighbors.size === branchConnection
+                ) {
                     hasUselessBranch = true;
+                }
+                if (v.tiles.size > maxEmptyArea) {
+                    maxEmptyArea = v.tiles.size;
+                }
+            } else if (v.type === GraphNodeType.Resource) {
+                if (v.tiles.size > maxResourceArea) {
+                    maxResourceArea = v.tiles.size;
                 }
             }
         });
@@ -219,6 +233,9 @@ export function parseFloorInfo(
         tower,
         topo,
         map,
+        maxEmptyArea,
+        maxResourceArea,
+        hasUselessBranch,
         globalDensity: count(flattened, nonEmptyTiles) / area,
         wallDensity: count(flattened, wallTiles) / area,
         doorDensity: count(flattened, doorTiles) / area,
@@ -230,8 +247,6 @@ export function parseFloorInfo(
         itemDensity: count(flattened, itemTiles) / area,
         entryCount: count(flattened, entryTiles),
         specialDoorCount: count(flattened, specialDoorTiles),
-        fishCount,
-        hasUselessBranch,
         wallDensityStd: computeWallDensityStd(map, wallTiles, 5),
         wallHeatmap: gaussainHeatmap(
             generateHeatmap(map, wallTiles, config.heatmapKernel),

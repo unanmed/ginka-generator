@@ -8,7 +8,6 @@ export function generateHeatmap(
     tokens: Set<number>,
     kernel: number = 5
 ): number[][] {
-    if (kernel === 0) return map.map(v => v.slice());
     if (kernel % 2 !== 1) {
         throw new Error(`Kernal size must be odd.`);
     }

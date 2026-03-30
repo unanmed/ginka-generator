@@ -4,6 +4,7 @@ import { IAutoLabelConfig, IConvertedMapInfo, ITowerInfo } from './types';
 import { join } from 'path';
 import { Presets, SingleBar } from 'cli-progress';
 import { convertTowerMap, runTowerCode } from './tower';
+import { MapTileConverter } from './converter';
 
 export interface ILabelResult {
     /** 塔信息列表 */
@@ -31,6 +32,8 @@ export async function autoLabelTowers(
 
     // 统计被不同规则过滤掉的楼层
     let ignoredFloorsSize = 0;
+    let ignoredMaxEmptyArea = 0;
+    let ignoredMaxResourceArea = 0;
     let ignoredFloorsEnemy = 0;
     let ignoredFloorsWall = 0;
     let ignoredFloorsResource = 0;
@@ -76,6 +79,8 @@ export async function autoLabelTowers(
             continue;
         }
 
+        const converter = new MapTileConverter(result, config);
+
         const info = towers.get(result.data.firstData.name);
         if (!info) continue;
         const customPass = config.customTowerFilter?.(info) ?? true;
@@ -94,8 +99,29 @@ export async function autoLabelTowers(
                 continue;
             }
             // 转换楼层
-            const converted = convertTowerMap(result, floor, config);
-            const floorInfo = parseFloorInfo(info, converted.map, config);
+            const converted = convertTowerMap(result, floor, config, converter);
+            const otherLayers = [];
+            if (floor.bgmap) {
+                otherLayers.push(floor.bgmap);
+            }
+            if (floor.bg2map) {
+                otherLayers.push(floor.bg2map);
+            }
+            if (floor.fgmap) {
+                otherLayers.push(floor.fgmap);
+            }
+            if (floor.fg2map) {
+                otherLayers.push(floor.fg2map);
+            }
+            const floorInfo = parseFloorInfo(
+                info,
+                floor.map,
+                converted.map,
+                otherLayers,
+                config,
+                converter,
+                name
+            );
             const floorData: IConvertedMapInfo = {
                 data: converted,
                 tower: info,
@@ -103,6 +129,14 @@ export async function autoLabelTowers(
                 info: floorInfo
             };
             // 配置过滤楼层
+            if (floorInfo.maxEmptyArea > config.maxEmptyArea) {
+                ignoredMaxEmptyArea++;
+                continue;
+            }
+            if (floorInfo.maxResourceArea > config.maxResourceArea) {
+                ignoredMaxResourceArea++;
+                continue;
+            }
             if (
                 floorInfo.enemyDensity < config.minEnemyRatio ||
                 floorInfo.enemyDensity > config.maxEnemyRatio
@@ -129,13 +163,6 @@ export async function autoLabelTowers(
                 floorInfo.doorDensity > config.maxDoorRatio
             ) {
                 ignoredFloorsDoor++;
-                continue;
-            }
-            if (
-                floorInfo.fishCount < config.minFishCount ||
-                floorInfo.fishCount > config.maxFishCount
-            ) {
-                ignoredFloorsFish++;
                 continue;
             }
             if (
@@ -191,6 +218,8 @@ export async function autoLabelTowers(
         )} 层，过滤掉 ${totalFilted} 层:`
     );
     console.log(`尺寸过滤：${ignoredFloorsSize} 层`);
+    console.log(`空地过滤：${ignoredMaxEmptyArea} 层`);
+    console.log(`资源区域过滤：${ignoredMaxResourceArea} 层`);
     console.log(`怪物过滤：${ignoredFloorsEnemy} 层`);
     console.log(`墙壁过滤：${ignoredFloorsWall} 层`);
     console.log(`资源过滤：${ignoredFloorsResource} 层`);
