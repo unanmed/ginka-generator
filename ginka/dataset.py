@@ -30,7 +30,7 @@ class GinkaMaskGITDataset(Dataset):
         
         target = torch.LongTensor(item['map']) # [H, W]
         cond = torch.FloatTensor(item['val']) # [cond_dim]
-        heatmap = np.array(item['heatmap'])
+        heatmap = np.array(item['heatmap'], dtype=np.float32)
         
         if random.random() < 0.5:
             size = random.randint(self.blur_min, self.blur_max)
