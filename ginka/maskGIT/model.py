@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from ..utils import print_memory
 from .cond import GinkaMaskGITCond
+from .maskGIT import MaskGIT
 
 class GinkaMaskGIT(nn.Module):
     def __init__(
@@ -16,14 +17,7 @@ class GinkaMaskGIT(nn.Module):
         
         self.cond_encoder = GinkaMaskGITCond(cond_dim=cond_dim, heatmap_channel=heatmap_channel, output_dim=d_model)
         
-        self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_ff, batch_first=True, activation='gelu'),
-            num_layers=num_layers
-        )
-        self.decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_ff, batch_first=True, activation='gelu'),
-            num_layers=num_layers
-        )
+        self.transformer = MaskGIT(d_model=d_model, dim_ff=dim_ff, nhead=nhead, num_layers=num_layers)
         
         self.output_fc = nn.Sequential(
             nn.Linear(d_model, num_classes)
@@ -43,11 +37,9 @@ class GinkaMaskGIT(nn.Module):
         heatmap = heatmap.view(B, C, H * W).permute(0, 2, 1)
         x = self.tile_embedding(map) + heatmap
         x = torch.cat([cond.unsqueeze(1), x], dim=1) + self.pos_embedding
+        x = self.transformer(x)
         
-        m = self.encoder(x)
-        out = self.decoder(x, m)
-        
-        logits = self.output_fc(out)
+        logits = self.output_fc(x)
         
         return logits[:, :-1, :]
         
@@ -74,7 +66,6 @@ if __name__ == "__main__":
     print(f"输出形状: output={output.shape}")
     print(f"Tile Embedding parameters: {sum(p.numel() for p in model.tile_embedding.parameters())}")
     print(f"Condition Encoder parameters: {sum(p.numel() for p in model.cond_encoder.parameters())}")
-    print(f"Encoder parameters: {sum(p.numel() for p in model.encoder.parameters())}")
-    print(f"Decoder parameters: {sum(p.numel() for p in model.decoder.parameters())}")
+    print(f"MaskGIT parameters: {sum(p.numel() for p in model.transformer.parameters())}")
     print(f"Output parameters: {sum(p.numel() for p in model.output_fc.parameters())}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")

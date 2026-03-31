@@ -28,9 +28,25 @@ class GinkaMaskGITDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         
-        target = torch.LongTensor(item['map']) # [H, W]
-        cond = torch.FloatTensor(item['val']) # [cond_dim]
+        target_np = np.array(item['map'])
         heatmap = np.array(item['heatmap'], dtype=np.float32)
+        
+        # 数据增强
+        if np.random.rand() > 0.5:
+            k = np.random.randint(0, 4)
+            target_np = np.rot90(target_np, k)
+            heatmap = np.rot90(heatmap, k)
+
+        if np.random.rand() > 0.5:
+            target_np = np.fliplr(target_np)
+            heatmap = np.fliplr(heatmap)
+
+        if np.random.rand() > 0.5:
+            target_np = np.flipud(target_np)
+            heatmap = np.flipud(heatmap)
+        
+        target = torch.LongTensor(target_np) # [H, W]
+        cond = torch.FloatTensor(item['val']) # [cond_dim]
         
         if random.random() < 0.5:
             size = random.randint(self.blur_min, self.blur_max)
