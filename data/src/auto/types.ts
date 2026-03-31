@@ -1,5 +1,3 @@
-import { GinkaTopologicalGraphs } from '../topology/interface';
-
 export const enum TowerColor {
     White,
     Orange,
