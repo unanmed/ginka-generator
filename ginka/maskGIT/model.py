@@ -7,15 +7,15 @@ from .maskGIT import MaskGIT
 
 class GinkaMaskGIT(nn.Module):
     def __init__(
-        self, num_classes=16, cond_dim=16, heatmap_channel=4, d_model=256, 
+        self, num_classes=16, heatmap_channel=4, d_model=256, 
         dim_ff=512, nhead=8, num_layers=4, map_size=13*13
     ):
         super().__init__()
         
         self.tile_embedding = nn.Embedding(num_classes, d_model)
-        self.pos_embedding = nn.Parameter(torch.randn(1, map_size + 1, d_model))
+        self.pos_embedding = nn.Parameter(torch.randn(1, map_size, d_model))
         
-        self.cond_encoder = GinkaMaskGITCond(cond_dim=cond_dim, heatmap_channel=heatmap_channel, output_dim=d_model)
+        self.cond_encoder = GinkaMaskGITCond(heatmap_channel=heatmap_channel, output_dim=d_model)
         
         self.transformer = MaskGIT(d_model=d_model, dim_ff=dim_ff, nhead=nhead, num_layers=num_layers)
         
@@ -23,12 +23,11 @@ class GinkaMaskGIT(nn.Module):
             nn.Linear(d_model, num_classes)
         )
         
-    def forward(self, map: torch.Tensor, cond: torch.Tensor, heatmap: torch.Tensor):
+    def forward(self, map: torch.Tensor, heatmap: torch.Tensor):
         # map: [B, H * W]
-        # cond: [B, cond_dim]
         # heatmap: [B, C, H, W]
         # output: [B, H * W, num_classes]
-        cond, heatmap = self.cond_encoder(cond, heatmap)
+        heatmap = self.cond_encoder(heatmap)
         # cond: [B, d_model]
         # heatmap: [B, d_model, H, W]
         
@@ -36,18 +35,17 @@ class GinkaMaskGIT(nn.Module):
         
         heatmap = heatmap.view(B, C, H * W).permute(0, 2, 1)
         x = self.tile_embedding(map) + heatmap
-        x = torch.cat([cond.unsqueeze(1), x], dim=1) + self.pos_embedding
+        x = x + self.pos_embedding
         x = self.transformer(x)
         
         logits = self.output_fc(x)
         
-        return logits[:, :-1, :]
+        return logits
         
 if __name__ == "__main__":
     device = torch.device("cpu")
     
     map = torch.randint(0, 16, [1, 169]).to(device)
-    cond = torch.rand(1, 16).to(device)
     heatmap = torch.rand(1, 4, 13, 13).to(device)
     
     # 初始化模型
@@ -57,7 +55,7 @@ if __name__ == "__main__":
     
     # 前向传播
     start = time.perf_counter()
-    output = model(map, cond, heatmap)
+    output = model(map, heatmap)
     end = time.perf_counter()
     
     print_memory("前向传播后")

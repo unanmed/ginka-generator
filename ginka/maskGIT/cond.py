@@ -4,17 +4,8 @@ import torch.nn as nn
 from ..utils import print_memory
 
 class GinkaMaskGITCond(nn.Module):
-    def __init__(self, cond_dim=16, heatmap_channel=4, output_dim=256):
+    def __init__(self,  heatmap_channel=4, output_dim=256):
         super().__init__()
-        self.cond_fc = nn.Sequential(
-            nn.Linear(cond_dim, output_dim // 2),
-            nn.Dropout(0.3),
-            nn.LayerNorm(output_dim // 2),
-            nn.GELU(),
-            
-            nn.Linear(output_dim // 2, output_dim)
-        )
-        
         self.heatmap_conv = nn.Sequential(
             nn.Conv2d(heatmap_channel, output_dim // 4, kernel_size=3, padding=1, padding_mode='replicate'),
             nn.BatchNorm2d(output_dim // 4),
@@ -24,20 +15,19 @@ class GinkaMaskGITCond(nn.Module):
             nn.BatchNorm2d(output_dim // 2),
             nn.GELU(),
             
-            nn.Conv2d(output_dim // 2, output_dim, kernel_size=3, padding=1, padding_mode='replicate')
+            nn.Conv2d(output_dim // 2, output_dim, kernel_size=3, padding=1, padding_mode='replicate'),
+            nn.BatchNorm2d(output_dim),
+            nn.GELU()
         )
     
-    def forward(self, cond, heatmap):
-        # cond: [B, cond_dim]
+    def forward(self, heatmap):
         # heatmap: [B, C, H, W]
-        cond = self.cond_fc(cond)
         heatmap = self.heatmap_conv(heatmap)
-        return cond, heatmap
+        return heatmap
     
 if __name__ == "__main__":
     device = torch.device("cpu")
     
-    cond = torch.rand(1, 16).to(device)
     heatmap = torch.rand(1, 4, 13, 13).to(device)
     
     # 初始化模型
@@ -47,7 +37,7 @@ if __name__ == "__main__":
     
     # 前向传播
     start = time.perf_counter()
-    cond, heatmap = model(cond, heatmap)
+    cond, heatmap = model(heatmap)
     end = time.perf_counter()
     
     print_memory("前向传播后")

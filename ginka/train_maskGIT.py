@@ -113,7 +113,6 @@ def train():
         
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             target_map = batch["target_map"].to(device)
-            cond = batch["cond"].to(device)
             heatmap = batch["heatmap"].to(device)
             B, H, W = target_map.shape
 
@@ -129,7 +128,7 @@ def train():
             masked_input = target_map.clone()
             masked_input[mask] = MASK_TOKEN # 填充为 [MASK] 标记
             
-            logits = model(masked_input, cond, heatmap)
+            logits = model(masked_input, heatmap)
             
             loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=LABEL_SMOOTHING)
             loss = (loss * mask).sum() / (mask.sum() + 1e-6)
@@ -166,7 +165,6 @@ def train():
                 for batch in tqdm(dataloader_val, desc="Validating", leave=False, disable=disable_tqdm):
                     # 1. 常规生成
                     target_map = batch["target_map"].to(device)
-                    cond = batch["cond"].to(device)
                     heatmap = batch["heatmap"].to(device)
                     B, H, W = target_map.shape
                     target_map = target_map.view(B, H * W)
@@ -181,7 +179,7 @@ def train():
                     masked_input = target_map.clone()
                     masked_input[mask] = MASK_TOKEN # 填充为 [MASK] 标记
                     
-                    logits = model(masked_input, cond, heatmap)
+                    logits = model(masked_input, heatmap)
                     
                     loss = F.cross_entropy(logits.permute(0, 2, 1), target_map, reduction='none', label_smoothing=LABEL_SMOOTHING)
                     loss = (loss * mask).sum() / (mask.sum() + 1e-6)
@@ -201,7 +199,7 @@ def train():
                     map = torch.full((B, MAP_SIZE), MASK_TOKEN).to(device)
                     for i in range(GENERATE_STEP):
                         # 1. 预测
-                        logits = model(map, cond, heatmap) # [1, H * W, num_classes]
+                        logits = model(map, heatmap) # [1, H * W, num_classes]
                         probs = F.softmax(logits, dim=-1)
                         
                         # 2. 采样（为了多样性，这里可以使用概率采样而不是取最大值）
