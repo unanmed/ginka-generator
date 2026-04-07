@@ -40,7 +40,7 @@ class HeatmapCond(nn.Module):
         
     def forward(self, heatmap: torch.Tensor, t: torch.Tensor):
         # heatmap: [B, C, H, W]
-        # t: [B, 1]
+        # t: [B]
         t_embed = self.time_embedding(t)
         x = self.conv1(heatmap) + self.fc1(t_embed).unsqueeze(1).unsqueeze(1).permute(0, 3, 1, 2)
         x = self.conv2(x) + self.fc2(t_embed).unsqueeze(1).unsqueeze(1).permute(0, 3, 1, 2)

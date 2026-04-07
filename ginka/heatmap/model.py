@@ -16,8 +16,14 @@ class GinkaHeatmapModel(nn.Module):
         self.cond = HeatmapCond(T, embed_dim=embed_dim, heatmap_dim=heatmap_dim, output_dim=d_model)
         self.input = HeatmapCond(T, embed_dim=embed_dim, heatmap_dim=heatmap_dim, output_dim=d_model)
         self.transformer = MaskGIT(d_model=d_model, dim_ff=dim_ff, nhead=nhead, num_layers=num_layers)
+        self.cross_attn = nn.MultiheadAttention(d_model, num_heads=nhead, batch_first=True)
         self.output_fc = nn.Sequential(
-            nn.Linear(d_model, heatmap_dim)
+            nn.Linear(d_model, d_model // 2),
+            nn.LayerNorm(d_model // 2),
+            nn.Dropout(0.3),
+            nn.GELU(),
+            
+            nn.Linear(d_model // 2, heatmap_dim)
         )
         
     def forward(self, input: torch.Tensor, cond: torch.Tensor, t: torch.Tensor):
@@ -26,11 +32,15 @@ class GinkaHeatmapModel(nn.Module):
         # t: [B, 1]
         input = self.input(input, t) # [B, d_model, H, W]
         cond = self.cond(cond, t) # [B, d_model, H, W]
-        hidden = input + cond
-        B, C, H, W = hidden.shape
+        B, C, H, W = cond.shape
+        cond_tokens = cond.view(B, C, H * W).permute(0, 2, 1) # [B, H * W, d_model]
+        scale = torch.sigmoid(cond)
+        hidden = input * (1 + scale) + cond
         hidden = hidden.view(B, C, H * W).permute(0, 2, 1) # [B, H * W, d_model]
         hidden = hidden + self.pos_embedding
         hidden = self.transformer(hidden) # [B, H * W, d_model]
+        attn, _ = self.cross_attn(hidden, cond_tokens, cond_tokens)
+        hidden = hidden + attn
         output = self.output_fc(hidden) # [B, H * W, heatmap_dim]
         return output.view(B, H, W, self.heatmap_dim).permute(0, 3, 1, 2)
         
@@ -39,7 +49,7 @@ if __name__ == "__main__":
     
     input = torch.randn(1, 9, 13, 13).to(device)
     cond = torch.randint(0, 1, [1, 9, 13, 13]).to(device)
-    t = torch.randint(0, 100, [1, 1]).to(device)
+    t = torch.randint(0, 100, [1]).to(device)
     
     # 初始化模型
     model = GinkaHeatmapModel(heatmap_dim=9).to(device)

@@ -49,6 +49,7 @@ T_DIFFUSION = 100
 MIN_MASK = 0
 MAX_MASK = 0.8
 NOISE_SAMPLING_K = [40, 15, 21, 8, 8, 4, 1, 2, 10]
+W = 5 # CFG 参数
 
 device = torch.device(
     "cuda:1" if torch.cuda.is_available()
@@ -131,10 +132,14 @@ def train():
             target_heatmap = batch["target_heatmap"].to(device)
             B, C, H, W = target_heatmap.shape
 
-            t = torch.randint(1, T_DIFFUSION, (B,), device=device)
+            t = torch.randint(1, T_DIFFUSION, [B], device=device)
             noise = torch.randn_like(target_heatmap)
             
             x_t = diffusion.q_sample(target_heatmap, t, noise)
+            
+            # CFG 随机概率没有输入条件
+            if np.random.rand() < 0.2:
+                cond_heatmap = torch.zeros_like(cond_heatmap)
             
             pred_noise = model(x_t, cond_heatmap, t)
             
@@ -185,8 +190,7 @@ def train():
                 
                     # 2. 从头完整生成，并使用训练好的 MaskGIT 生成地图
                     if args.use_maskgit:
-                        fake_heatmap = diffusion.sample(model, cond_heatmap)
-                        map = maskGIT_generate(maskGIT, B, fake_heatmap)
+                        map = full_generate(model, maskGIT, cond_heatmap, diffusion)
                             
                         generated_img = matrix_to_image_cv(map.view(B, H, W)[0].cpu().numpy(), tile_dict)
                         cv2.imwrite(f"result/final_img/{idx}.png", generated_img)
@@ -199,8 +203,7 @@ def train():
                             noise = generate_fractal_noise_2d((16, 16), (4, 4), 1)[0:MAP_H,0:MAP_W]
                             ar[0,c] = nms_sampling(noise, NOISE_SAMPLING_K[c])
                         
-                        fake_heatmap = diffusion.sample(model, torch.FloatTensor(ar).to(device))
-                        map = maskGIT_generate(maskGIT, B, fake_heatmap)
+                        map = full_generate(model, maskGIT, torch.FloatTensor(ar).to(device), diffusion)
                         generated_img = matrix_to_image_cv(map.view(1, H, W)[0].cpu().numpy(), tile_dict)
                         cv2.imwrite(f"result/final_img/g-{i}.png", generated_img)
                     
@@ -214,6 +217,12 @@ def train():
     torch.save({
         "model_state": maskGIT.state_dict(),
     }, f"result/ginka_heatmap.pth")
+    
+def full_generate(heatmap, maskGIT, cond_heatmap: torch.Tensor, diffusion: Diffusion):
+    fake_heatmap_cond = diffusion.sample(heatmap, cond_heatmap)
+    fake_heatmap_uncond = diffusion.sample(heatmap, torch.zeros_like(cond_heatmap))
+    fake_heatmap = fake_heatmap_uncond + W * (fake_heatmap_uncond - fake_heatmap_cond)
+    return maskGIT_generate(maskGIT, cond_heatmap.shape[0], fake_heatmap)
     
 def maskGIT_generate(maskGIT, B: int, heatmap: torch.Tensor):
     map = torch.full((B, MAP_H * MAP_W), MASK_TOKEN).to(device)
