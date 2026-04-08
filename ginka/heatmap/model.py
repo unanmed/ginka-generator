@@ -2,7 +2,7 @@ import time
 import torch
 import torch.nn as nn
 from .cond import HeatmapCond
-from ..maskGIT.maskGIT import MaskGIT
+from ..maskGIT.maskGIT import Transformer
 from ..utils import print_memory
 
 class GinkaHeatmapModel(nn.Module):
@@ -15,7 +15,7 @@ class GinkaHeatmapModel(nn.Module):
         self.pos_embedding = nn.Parameter(torch.randn(1, map_size, d_model))
         self.cond = HeatmapCond(T, embed_dim=embed_dim, heatmap_dim=heatmap_dim, output_dim=d_model)
         self.input = HeatmapCond(T, embed_dim=embed_dim, heatmap_dim=heatmap_dim, output_dim=d_model)
-        self.transformer = MaskGIT(d_model=d_model, dim_ff=dim_ff, nhead=nhead, num_layers=num_layers)
+        self.transformer = Transformer(d_model=d_model, dim_ff=dim_ff, nhead=nhead, num_layers=num_layers)
         self.cross_attn = nn.MultiheadAttention(d_model, num_heads=nhead, batch_first=True)
         self.output_fc = nn.Sequential(
             nn.Linear(d_model, d_model // 2),

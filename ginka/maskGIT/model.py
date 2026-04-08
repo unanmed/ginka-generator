@@ -1,9 +1,10 @@
 import time
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from ..utils import print_memory
 from .cond import GinkaMaskGITCond
-from .maskGIT import MaskGIT
+from .maskGIT import Transformer
 
 class GinkaMaskGIT(nn.Module):
     def __init__(
@@ -15,9 +16,18 @@ class GinkaMaskGIT(nn.Module):
         self.tile_embedding = nn.Embedding(num_classes, d_model)
         self.pos_embedding = nn.Parameter(torch.randn(1, map_size, d_model))
         
-        self.cond_encoder = GinkaMaskGITCond(heatmap_channel=heatmap_channel, output_dim=d_model)
+        cond_channels = [d_model // 4, d_model // 2, d_model]
+        self.cond_encoder = GinkaMaskGITCond(input_channel=heatmap_channel, channels=cond_channels)
+        self.cond_gate = nn.Sequential(
+            nn.Linear(cond_channels[2] * 2, cond_channels[2]),
+            nn.LayerNorm(cond_channels[2]),
+            nn.Dropout(0.3),
+            nn.GELU(),
+            
+            nn.Linear(cond_channels[2], cond_channels[2])
+        )
         
-        self.transformer = MaskGIT(d_model=d_model, dim_ff=dim_ff, nhead=nhead, num_layers=num_layers)
+        self.transformer = Transformer(d_model=d_model, dim_ff=dim_ff, nhead=nhead, num_layers=num_layers)
         
         self.output_fc = nn.Sequential(
             nn.Linear(d_model, num_classes)
@@ -27,14 +37,15 @@ class GinkaMaskGIT(nn.Module):
         # map: [B, H * W]
         # heatmap: [B, C, H, W]
         # output: [B, H * W, num_classes]
-        heatmap = self.cond_encoder(heatmap)
-        # cond: [B, d_model]
-        # heatmap: [B, d_model, H, W]
-        
+        heatmap = self.cond_encoder(heatmap) # [B, d_model, H, W]
         B, C, H, W = heatmap.shape
+        heatmap_mean = F.avg_pool2d(heatmap, (H, W)) # [B, d_model, 1, 1]
+        heatmap_max = F.max_pool2d(heatmap, (H, W)) # [B, d_model, 1, 1]
+        gate_input = torch.cat([heatmap_mean, heatmap_max], dim=1).squeeze(2).squeeze(2)
+        gate = self.cond_gate(gate_input) # [B, d_model]
         
         heatmap = heatmap.view(B, C, H * W).permute(0, 2, 1)
-        x = self.tile_embedding(map) + heatmap
+        x = self.tile_embedding(map) + heatmap * torch.sigmoid(gate)
         x = x + self.pos_embedding
         x = self.transformer(x)
         
@@ -64,6 +75,7 @@ if __name__ == "__main__":
     print(f"输出形状: output={output.shape}")
     print(f"Tile Embedding parameters: {sum(p.numel() for p in model.tile_embedding.parameters())}")
     print(f"Condition Encoder parameters: {sum(p.numel() for p in model.cond_encoder.parameters())}")
+    print(f"Condition Gate parameters: {sum(p.numel() for p in model.cond_gate.parameters())}")
     print(f"MaskGIT parameters: {sum(p.numel() for p in model.transformer.parameters())}")
     print(f"Output parameters: {sum(p.numel() for p in model.output_fc.parameters())}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")

@@ -16,11 +16,16 @@ def load_data(path: str):
     return data_list
 
 class GinkaMaskGITDataset(Dataset):
-    def __init__(self, data_path: str, sigma_rand=0.1, blur_min=3, blur_max=6):
+    def __init__(
+        self, data_path: str, sigma_rand=0.1, blur_min=3, blur_max=6, 
+        noise_prob=0.2, drop_prob=0.2
+    ):
         self.data = load_data(data_path)
         self.sigma_rand = sigma_rand
         self.blur_min = blur_min
         self.blur_max = blur_max
+        self.noise_prob = noise_prob
+        self.drop_prob = drop_prob
         
     def __len__(self):
         return len(self.data)
@@ -47,6 +52,8 @@ class GinkaMaskGITDataset(Dataset):
             target_np = np.flipud(target_np)
             for i in range(0, heatmap.shape[0]):
                 heatmap[i] = np.flipud(heatmap[i])
+                
+        
         
         target = torch.LongTensor(target_np.copy()) # [H, W]
         cond = torch.FloatTensor(item['val']) # [cond_dim]
@@ -65,12 +72,19 @@ class GinkaMaskGITDataset(Dataset):
                 sizeY = sizeY + 1 if random.random() < 0.5 else sizeY - 1
             heatmap = cv2.GaussianBlur(heatmap, (sizeX, sizeY), 0)
             
+        for i in range(0, heatmap.shape[0]):
+            if np.random.rand() < self.noise_prob:
+                sigma = random.random() * self.sigma_rand
+                heatmap[i] = heatmap * sigma + np.random.randn() * (1 - sigma)
+            elif np.random.rand() < self.drop_prob:
+                heatmap[i] = np.zeros_like(heatmap[i])
+            
         heatmap = torch.FloatTensor(heatmap) # [heatmap_channel, H, W]
         
         if random.random() < 0.5:
             sigma = random.random() * self.sigma_rand
-            rand = torch.randn_like(heatmap) * sigma
-            heatmap = heatmap + rand
+            rand = torch.randn_like(heatmap)
+            heatmap = heatmap * (1 - sigma) + rand * sigma
 
         return {
             "cond": cond,

@@ -47,8 +47,7 @@ NUM_LAYERS_DIFFUSION = 4
 D_MODEL_DIFFUSION = 128
 T_DIFFUSION = 100
 MIN_MASK = 0
-MAX_MASK = 0.8
-NOISE_SAMPLING_K = [40, 15, 21, 8, 8, 4, 1, 2, 10]
+MAX_MASK = 1
 W = 5 # CFG 参数
 
 device = torch.device(
@@ -185,7 +184,7 @@ def train():
                     
                     pred_noise = model(x_t, cond_heatmap, t)
                     
-                    loss = F.mse_loss(pred_noise, noise)
+                    loss = F.l1_loss(pred_noise, noise)
                     
                     val_loss_total += loss.detach()
                 
@@ -202,9 +201,10 @@ def train():
                 if args.use_maskgit:
                     for i in range(0, 5):
                         ar = np.ndarray([1, HEATMAP_CHANNEL, MAP_H, MAP_W])
+                        k = get_nms_sampling_count()
                         for c in range(0, HEATMAP_CHANNEL):
                             noise = generate_fractal_noise_2d((16, 16), (4, 4), 1)[0:MAP_H,0:MAP_W]
-                            ar[0,c] = nms_sampling(noise, NOISE_SAMPLING_K[c])
+                            ar[0,c] = nms_sampling(noise, k[c])
                         
                         map = full_generate(model, maskGIT, torch.FloatTensor(ar).to(device), diffusion)
                         generated_img = matrix_to_image_cv(map.view(1, H, W)[0].cpu().numpy(), tile_dict)
@@ -221,12 +221,27 @@ def train():
         "model_state": maskGIT.state_dict(),
     }, f"result/ginka_heatmap.pth")
     
+def get_nms_sampling_count():
+    return [
+        np.random.randint(20, 40),
+        np.random.randint(10, 20),
+        np.random.randint(10, 30),
+        np.random.randint(4, 12),
+        np.random.randint(4, 12),
+        np.random.randint(2, 6), 
+        np.random.randint(0, 2),
+        np.random.randint(1, 3),
+        np.random.randint(2, 10)
+    ]
+
+@torch.no_grad()
 def full_generate(heatmap, maskGIT, cond_heatmap: torch.Tensor, diffusion: Diffusion):
     fake_heatmap_cond = diffusion.sample(heatmap, cond_heatmap)
     fake_heatmap_uncond = diffusion.sample(heatmap, torch.zeros_like(cond_heatmap))
     fake_heatmap = fake_heatmap_uncond + W * (fake_heatmap_uncond - fake_heatmap_cond)
     return maskGIT_generate(maskGIT, cond_heatmap.shape[0], fake_heatmap)
-    
+
+@torch.no_grad()
 def maskGIT_generate(maskGIT, B: int, heatmap: torch.Tensor):
     map = torch.full((B, MAP_H * MAP_W), MASK_TOKEN).to(device)
     for i in range(GENERATE_STEP):

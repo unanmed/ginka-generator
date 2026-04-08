@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-class MaskGIT(nn.Module):
+class Transformer(nn.Module):
     def __init__(
         self, d_model=256, dim_ff=512, nhead=8, num_layers=4,
     ):

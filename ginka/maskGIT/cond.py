@@ -4,19 +4,19 @@ import torch.nn as nn
 from ..utils import print_memory
 
 class GinkaMaskGITCond(nn.Module):
-    def __init__(self,  heatmap_channel=4, output_dim=256):
+    def __init__(self, input_channel=4, channels=[32, 64, 128]):
         super().__init__()
         self.heatmap_conv = nn.Sequential(
-            nn.Conv2d(heatmap_channel, output_dim // 4, kernel_size=3, padding=1, padding_mode='replicate'),
-            nn.BatchNorm2d(output_dim // 4),
+            nn.Conv2d(input_channel, channels[0], kernel_size=3, padding=1, padding_mode='replicate'),
+            nn.BatchNorm2d(channels[0]),
             nn.GELU(),
             
-            nn.Conv2d(output_dim // 4, output_dim // 2, kernel_size=3, padding=1, padding_mode='replicate'),
-            nn.BatchNorm2d(output_dim // 2),
+            nn.Conv2d(channels[0], channels[1], kernel_size=3, padding=1, padding_mode='replicate'),
+            nn.BatchNorm2d(channels[1]),
             nn.GELU(),
             
-            nn.Conv2d(output_dim // 2, output_dim, kernel_size=3, padding=1, padding_mode='replicate'),
-            nn.BatchNorm2d(output_dim),
+            nn.Conv2d(channels[1], channels[2], kernel_size=3, padding=1, padding_mode='replicate'),
+            nn.BatchNorm2d(channels[2]),
             nn.GELU()
         )
     
