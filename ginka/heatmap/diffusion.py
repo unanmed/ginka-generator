@@ -2,7 +2,7 @@ import math
 import torch
 
 class Diffusion:
-    def __init__(self, device, T=100, min_beta=0.0001, max_beta=0.02):
+    def __init__(self, device, T=100, min_beta=0.0001, max_beta=0.01):
         self.T = T
         self.device = device
 
@@ -29,7 +29,7 @@ class Diffusion:
     def sample(self, model, cond: torch.Tensor):
         x = torch.randn_like(cond).to(self.device)
         for t in range(self.n_steps - 1, -1, -1):
-            x = self.sample_backward_step(x, t, model)
+            x = self.sample_backward_step(x, t, cond, model)
         return x
 
     def sample_backward_step(self, x_t, t, cond, model):

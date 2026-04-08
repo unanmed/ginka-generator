@@ -132,6 +132,8 @@ def train():
             target_heatmap = batch["target_heatmap"].to(device)
             B, C, H, W = target_heatmap.shape
 
+            optimizer.zero_grad()
+
             t = torch.randint(1, T_DIFFUSION, [B], device=device)
             noise = torch.randn_like(target_heatmap)
             
@@ -145,7 +147,6 @@ def train():
             
             loss = F.mse_loss(pred_noise, noise)
             
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             loss_total += loss.detach()
