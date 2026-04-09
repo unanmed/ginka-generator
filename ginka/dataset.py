@@ -18,7 +18,7 @@ def load_data(path: str):
 class GinkaMaskGITDataset(Dataset):
     def __init__(
         self, data_path: str, sigma_rand=0.1, blur_min=3, blur_max=6, 
-        noise_prob=0.2, drop_prob=0.2
+        noise_prob=0.2, drop_prob=0.2, noise_sigma=0.1
     ):
         self.data = load_data(data_path)
         self.sigma_rand = sigma_rand
@@ -26,6 +26,7 @@ class GinkaMaskGITDataset(Dataset):
         self.blur_max = blur_max
         self.noise_prob = noise_prob
         self.drop_prob = drop_prob
+        self.noise_sigma = noise_sigma
         
     def __len__(self):
         return len(self.data)
@@ -52,8 +53,6 @@ class GinkaMaskGITDataset(Dataset):
             target_np = np.flipud(target_np)
             for i in range(0, heatmap.shape[0]):
                 heatmap[i] = np.flipud(heatmap[i])
-                
-        
         
         target = torch.LongTensor(target_np.copy()) # [H, W]
         cond = torch.FloatTensor(item['val']) # [cond_dim]
@@ -76,8 +75,8 @@ class GinkaMaskGITDataset(Dataset):
         
         for i in range(0, heatmap.shape[0]):
             if np.random.rand() < self.noise_prob:
-                sigma = random.random() * self.sigma_rand
-                heatmap[i] = heatmap * sigma + torch.rand_like(heatmap[i]) * (1 - sigma)
+                sigma = random.random() * self.noise_sigma
+                heatmap[i] = heatmap[i] * sigma + torch.rand_like(heatmap[i]) * (1 - sigma)
             elif np.random.rand() < self.drop_prob:
                 heatmap[i] = torch.zeros_like(heatmap[i])
         

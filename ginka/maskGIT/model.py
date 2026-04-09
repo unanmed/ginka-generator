@@ -44,8 +44,9 @@ class GinkaMaskGIT(nn.Module):
         gate_input = torch.cat([heatmap_mean, heatmap_max], dim=1).squeeze(2).squeeze(2)
         gate = self.cond_gate(gate_input) # [B, d_model]
         
+        heatmap = heatmap * torch.sigmoid(gate).unsqueeze(2).unsqueeze(2)
         heatmap = heatmap.view(B, C, H * W).permute(0, 2, 1)
-        x = self.tile_embedding(map) + heatmap * torch.sigmoid(gate)
+        x = self.tile_embedding(map) + heatmap
         x = x + self.pos_embedding
         x = self.transformer(x)
         
