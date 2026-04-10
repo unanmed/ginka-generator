@@ -49,7 +49,7 @@ BLUR_MAX_SIZE = 9
 RAND_RATIO = 0.3
 MASK_PROBS = [0.5, 0.5] # 纯随机，分块随机
 NUM_LAYERS = 4
-D_MODEL = 128
+D_MODEL = 192
 
 device = torch.device(
     "cuda:1" if torch.cuda.is_available()
@@ -87,7 +87,7 @@ def train():
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     dataloader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE // VAL_BATCH_DIVIDER, shuffle=True)
     
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-2)
+    optimizer = optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     # 用于生成图片

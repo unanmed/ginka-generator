@@ -41,7 +41,7 @@ RAND_RATIO = 0.15
 # MaskGIT 生成设置
 USE_MASK_GIT_PREVIEW = True
 NUM_LAYERS = 4
-D_MODEL = 128
+D_MODEL = 192
 # Diffusion 生成设置
 NUM_LAYERS_DIFFUSION = 4
 D_MODEL_DIFFUSION = 128
@@ -85,6 +85,7 @@ def train():
             num_classes=NUM_CLASSES, heatmap_channel=HEATMAP_CHANNEL,
             num_layers=NUM_LAYERS, d_model=D_MODEL
         ).to(device)
+        maskGIT.eval()
     model = GinkaHeatmapModel(
         T=T_DIFFUSION, heatmap_dim=HEATMAP_CHANNEL, d_model=D_MODEL_DIFFUSION,
         num_layers=NUM_LAYERS_DIFFUSION
