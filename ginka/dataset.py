@@ -157,3 +157,76 @@ class GinkaHeatmapDataset(Dataset):
             "target_heatmap": heatmap,
             "cond_heatmap": cond
         }
+
+
+class GinkaJointDataset(Dataset):
+    def __init__(self, data_path: str, min_mask=0, max_mask=0.8, blur_min=3, blur_max=6):
+        self.data = load_data(data_path)
+        self.blur_min = blur_min
+        self.blur_max = blur_max
+        self.min_mask = min_mask
+        self.max_mask = max_mask
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+
+        target_map = np.array(item['map'])
+        heatmap = np.array(item['heatmap'], dtype=np.float32)
+
+        if np.random.rand() > 0.5:
+            k = np.random.randint(0, 4)
+            target_map = np.rot90(target_map, k)
+            for i in range(0, heatmap.shape[0]):
+                heatmap[i] = np.rot90(heatmap[i], k)
+
+        if np.random.rand() > 0.5:
+            target_map = np.fliplr(target_map)
+            for i in range(0, heatmap.shape[0]):
+                heatmap[i] = np.fliplr(heatmap[i])
+
+        if np.random.rand() > 0.5:
+            target_map = np.flipud(target_map)
+            for i in range(0, heatmap.shape[0]):
+                heatmap[i] = np.flipud(heatmap[i])
+
+        target_heatmap = heatmap.copy()
+
+        if random.random() < 0.5:
+            size = random.randint(self.blur_min, self.blur_max)
+            if size % 2 == 0:
+                size = size + 1 if random.random() < 0.5 else size - 1
+            target_heatmap = cv2.GaussianBlur(target_heatmap, (size, size), 0)
+        else:
+            sizeX = random.randint(self.blur_min, self.blur_max)
+            sizeY = random.randint(self.blur_min, self.blur_max)
+            if sizeX % 2 == 0:
+                sizeX = sizeX + 1 if random.random() < 0.5 else sizeX - 1
+            if sizeY % 2 == 0:
+                sizeY = sizeY + 1 if random.random() < 0.5 else sizeY - 1
+            target_heatmap = cv2.GaussianBlur(target_heatmap, (sizeX, sizeY), 0)
+
+        target_map = torch.LongTensor(target_map.copy())
+        target_heatmap = torch.FloatTensor(target_heatmap)
+        cond_heatmap = torch.FloatTensor(heatmap.copy())
+        channels, height, width = cond_heatmap.shape
+
+        for i in range(channels):
+            total = height * width
+            ratio = np.random.random() * (self.max_mask - self.min_mask) + self.min_mask
+            num = int(total * ratio)
+
+            masked_indices = np.random.choice(total, num, replace=False)
+
+            mask = np.zeros(total, dtype=bool)
+            mask[masked_indices] = True
+            mask = mask.reshape(height, width)
+            cond_heatmap[i, mask] = 0
+
+        return {
+            "target_map": target_map,
+            "target_heatmap": target_heatmap,
+            "cond_heatmap": cond_heatmap
+        }

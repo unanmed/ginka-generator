@@ -18,6 +18,11 @@ class GinkaMaskGIT(nn.Module):
         
         cond_channels = [d_model // 4, d_model // 2, d_model]
         self.cond_encoder = GinkaMaskGITCond(input_channel=heatmap_channel, channels=cond_channels)
+        self.gate_encoder = nn.Sequential(
+            nn.Conv2d(cond_channels[2], cond_channels[2], 3, padding=1, padding_mode="replicate"),
+            nn.BatchNorm2d(cond_channels[2]),
+            nn.GELU()
+        )
         self.cond_gate = nn.Sequential(
             nn.Linear(cond_channels[2] * 2, cond_channels[2]),
             nn.LayerNorm(cond_channels[2]),
@@ -39,8 +44,9 @@ class GinkaMaskGIT(nn.Module):
         # output: [B, H * W, num_classes]
         heatmap = self.cond_encoder(heatmap) # [B, d_model, H, W]
         B, C, H, W = heatmap.shape
-        heatmap_mean = F.avg_pool2d(heatmap, (H, W)) # [B, d_model, 1, 1]
-        heatmap_max = F.max_pool2d(heatmap, (H, W)) # [B, d_model, 1, 1]
+        heatmap_gate = self.gate_encoder(heatmap)
+        heatmap_mean = F.avg_pool2d(heatmap_gate, (H, W)) # [B, d_model, 1, 1]
+        heatmap_max = F.max_pool2d(heatmap_gate, (H, W)) # [B, d_model, 1, 1]
         gate_input = torch.cat([heatmap_mean, heatmap_max], dim=1).squeeze(2).squeeze(2)
         gate = self.cond_gate(gate_input) # [B, d_model]
         
