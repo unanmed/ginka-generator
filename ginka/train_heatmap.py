@@ -219,7 +219,7 @@ def train():
             
     print("Train ended.")
     torch.save({
-        "model_state": maskGIT.state_dict(),
+        "model_state": model.state_dict(),
     }, f"result/ginka_heatmap.pth")
     
 def get_nms_sampling_count():
