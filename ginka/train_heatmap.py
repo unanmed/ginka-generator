@@ -48,6 +48,7 @@ D_MODEL_DIFFUSION = 128
 T_DIFFUSION = 100
 MIN_MASK = 0
 MAX_MASK = 1
+NOISE_SCALE = 0.3
 W = 5 # CFG 参数
 
 device = torch.device(
@@ -91,7 +92,7 @@ def train():
         num_layers=NUM_LAYERS_DIFFUSION
     ).to(device)
     
-    diffusion = Diffusion(device)
+    diffusion = Diffusion(device, noise_scale=NOISE_SCALE)
     
     dataset = GinkaHeatmapDataset(args.train, min_mask=MIN_MASK, max_mask=MAX_MASK)
     dataset_val = GinkaHeatmapDataset(args.validate, min_mask=MIN_MASK, max_mask=MAX_MASK)
@@ -129,7 +130,7 @@ def train():
         
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             cond_heatmap = batch["cond_heatmap"].to(device)
-            target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
+            target_heatmap = batch["target_heatmap"].to(device)
             B, C, H, W = target_heatmap.shape
 
             optimizer.zero_grad()
@@ -143,9 +144,10 @@ def train():
             if np.random.rand() < 0.2:
                 cond_heatmap = torch.zeros_like(cond_heatmap)
             
-            pred_noise = model(x_t, cond_heatmap, t)
+            # 模型预测 x_0，损失直接对齐热力图
+            pred_x0 = model(x_t, cond_heatmap, t)
             
-            loss = F.mse_loss(pred_noise, noise)
+            loss = F.mse_loss(pred_x0, target_heatmap)
             
             loss.backward()
             optimizer.step()
@@ -175,7 +177,7 @@ def train():
                 for batch in tqdm(dataloader_val, desc="Validating", leave=False, disable=disable_tqdm):
                     # 1. 验证集验证
                     cond_heatmap = batch["cond_heatmap"].to(device)
-                    target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
+                    target_heatmap = batch["target_heatmap"].to(device)
                     B, C, H, W = target_heatmap.shape
 
                     t = torch.randint(1, T_DIFFUSION, [B], device=device)
@@ -183,9 +185,9 @@ def train():
                     
                     x_t = diffusion.q_sample(target_heatmap, t, noise)
                     
-                    pred_noise = model(x_t, cond_heatmap, t)
+                    pred_x0 = model(x_t, cond_heatmap, t)
                     
-                    loss = F.mse_loss(pred_noise, noise)
+                    loss = F.mse_loss(pred_x0, target_heatmap)
                     
                     val_loss_total += loss.detach()
                 
@@ -236,8 +238,8 @@ def get_nms_sampling_count():
     ]
 
 def full_generate(heatmap, maskGIT, cond_heatmap: torch.Tensor, diffusion: Diffusion):
-    fake_heatmap_cond = (diffusion.sample(heatmap, cond_heatmap) + 1) / 2
-    fake_heatmap_uncond = (diffusion.sample(heatmap, torch.zeros_like(cond_heatmap)) + 1) / 2
+    fake_heatmap_cond = diffusion.sample(heatmap, cond_heatmap)
+    fake_heatmap_uncond = diffusion.sample(heatmap, torch.zeros_like(cond_heatmap))
     fake_heatmap = fake_heatmap_uncond + W * (fake_heatmap_uncond - fake_heatmap_cond) # [B, C, H, W]
     return maskGIT_generate(maskGIT, cond_heatmap.shape[0], fake_heatmap)
 

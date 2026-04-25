@@ -46,6 +46,7 @@ D_MODEL_DIFFUSION = 128
 T_DIFFUSION = 100
 MIN_MASK = 0
 MAX_MASK = 1
+NOISE_SCALE = 0.3
 
 # 验证预览配置
 PREVIEW_CFG_WEIGHT = 5  # 预览生成时使用的 CFG 强度
@@ -100,14 +101,6 @@ def freeze_module(module: torch.nn.Module):
     module.eval()
     for parameter in module.parameters():
         parameter.requires_grad = False
-
-
-def predict_x0(diffusion: Diffusion, x_t: torch.Tensor, pred_noise: torch.Tensor, t: torch.Tensor):
-    # 根据当前时刻的噪声预测还原 x0 热力图估计。
-    sqrt_ab = diffusion.sqrt_ab[t][:, None, None, None]
-    sqrt_one_minus_ab = diffusion.sqrt_one_minus_ab[t][:, None, None, None]
-    x0 = (x_t - sqrt_one_minus_ab * pred_noise) / sqrt_ab
-    return x0
 
 
 def maskgit_joint_loss(maskgit, generated_heatmap: torch.Tensor, target_map: torch.Tensor):
@@ -233,7 +226,7 @@ def validate(model, maskgit, diffusion, dataloader, ce_weight: float, tile_dict)
         preview_idx = 0
         for batch in tqdm(dataloader, desc="Validating", leave=False, disable=disable_tqdm):
             cond_heatmap = batch["cond_heatmap"].to(device)
-            target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
+            target_heatmap = batch["target_heatmap"].to(device)
             target_map = batch["target_map"].to(device)
             batch_size, _, map_height, map_width = target_heatmap.shape
 
@@ -241,11 +234,10 @@ def validate(model, maskgit, diffusion, dataloader, ce_weight: float, tile_dict)
             noise = torch.randn_like(target_heatmap)
             x_t = diffusion.q_sample(target_heatmap, t, noise)
 
-            pred_noise = model(x_t, cond_heatmap, t)
-            diffusion_loss = F.mse_loss(pred_noise, noise)
+            pred_x0 = model(x_t, cond_heatmap, t)
+            diffusion_loss = F.mse_loss(pred_x0, target_heatmap)
 
-            generated_heatmap = (predict_x0(diffusion, x_t, pred_noise, t) + 1) / 2
-            maskgit_loss = maskgit_joint_loss(maskgit, generated_heatmap, target_map)
+            maskgit_loss = maskgit_joint_loss(maskgit, pred_x0, target_map)
 
             loss = diffusion_loss + ce_weight * maskgit_loss
             total_loss += loss.item()
@@ -297,7 +289,7 @@ def train():
         d_model=D_MODEL_DIFFUSION,
         num_layers=NUM_LAYERS_DIFFUSION,
     ).to(device)
-    diffusion = Diffusion(device, T=T_DIFFUSION)
+    diffusion = Diffusion(device, T=T_DIFFUSION, noise_scale=NOISE_SCALE)
 
     dataset = GinkaJointDataset(args.train, min_mask=MIN_MASK, max_mask=MAX_MASK)
     dataset_val = GinkaJointDataset(args.validate, min_mask=MIN_MASK, max_mask=MAX_MASK)
@@ -325,7 +317,7 @@ def train():
 
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             cond_heatmap = batch["cond_heatmap"].to(device)
-            target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
+            target_heatmap = batch["target_heatmap"].to(device)
             target_map = batch["target_map"].to(device)
             batch_size = target_heatmap.shape[0]
 
@@ -341,16 +333,15 @@ def train():
                 cond_for_diffusion = torch.zeros_like(cond_heatmap)
                 use_unconditional_branch = True
 
-            pred_noise = model(x_t, cond_for_diffusion, t)
-            diffusion_loss = F.mse_loss(pred_noise, noise)
+            pred_x0 = model(x_t, cond_for_diffusion, t)
+            diffusion_loss = F.mse_loss(pred_x0, target_heatmap)
 
-            pred_noise_for_joint = pred_noise
+            # 若使用无条件分支，重新对有条件输入预测以计算联合损失
+            pred_x0_for_joint = pred_x0
             if use_unconditional_branch:
-                pred_noise_for_joint = model(x_t, cond_heatmap, t)
+                pred_x0_for_joint = model(x_t, cond_heatmap, t)
 
-            generated_heatmap = (predict_x0(diffusion, x_t, pred_noise_for_joint, t) + 1) / 2
-            print(torch.mean(generated_heatmap), torch.std(generated_heatmap), generated_heatmap.shape)
-            maskgit_loss = maskgit_joint_loss(maskgit, generated_heatmap, target_map)
+            maskgit_loss = maskgit_joint_loss(maskgit, pred_x0_for_joint, target_map)
 
             loss = diffusion_loss + CE_WEIGHT * maskgit_loss
             loss.backward()

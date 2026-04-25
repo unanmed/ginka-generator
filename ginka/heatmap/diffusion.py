@@ -2,9 +2,10 @@ import math
 import torch
 
 class Diffusion:
-    def __init__(self, device, T=100):
+    def __init__(self, device, T=100, noise_scale=0.5):
         self.T = T
         self.device = device
+        self.noise_scale = noise_scale
 
         # cosine schedule（推荐）
         steps = torch.arange(T + 1, dtype=torch.float32)
@@ -18,33 +19,41 @@ class Diffusion:
 
     def q_sample(self, x0, t, noise):
         """
-        前向加噪
+        前向加噪：x_t = sqrt(αbar_t) * x0 + sqrt(1-αbar_t) * noise_scale * ε
+        noise_scale 降低噪声功率，使信号不被淹没
         """
         return (
             self.sqrt_ab[t][:, None, None, None] * x0
-            + self.sqrt_one_minus_ab[t][:, None, None, None] * noise
+            + self.sqrt_one_minus_ab[t][:, None, None, None] * noise * self.noise_scale
         )
         
     def sample(self, model, cond: torch.Tensor, steps=20):
+        """
+        DDIM 风格逆向采样，模型预测 x_0
+        x_{t-1} = sqrt(αbar_{t-1}) * x0_pred
+                + sqrt(1-αbar_{t-1}) / sqrt(1-αbar_t) * (x_t - sqrt(αbar_t) * x0_pred)
+        """
         B = cond.shape[0]
-        x = torch.randn_like(cond).to(cond.device)
+        # 初始噪声与前向过程保持一致的噪声功率
+        x = torch.randn_like(cond).to(cond.device) * self.noise_scale
 
         step_size = self.T // steps
 
         for i in reversed(range(0, self.T, step_size)):
             t = torch.full((B,), i, device=cond.device)
 
-            pred_noise = model(x, cond, t)
+            # 模型直接预测 x_0
+            x0_pred = model(x, cond, t)
 
             alpha = self.alpha_bar[i]
             alpha_prev = self.alpha_bar[max(i - step_size, 0)]
 
-            x0_pred = (x - torch.sqrt(1 - alpha) * pred_noise) / torch.sqrt(alpha)
+            # DDIM x0-prediction 更新
+            direction = (
+                torch.sqrt(1 - alpha_prev) / torch.sqrt(1 - alpha)
+            ) * (x - torch.sqrt(alpha) * x0_pred)
 
-            x = (
-                torch.sqrt(alpha_prev) * x0_pred
-                + torch.sqrt(1 - alpha_prev) * pred_noise
-            )
+            x = torch.sqrt(alpha_prev) * x0_pred + direction
 
         return x
 
