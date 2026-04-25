@@ -129,7 +129,7 @@ def train():
         
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             cond_heatmap = batch["cond_heatmap"].to(device)
-            target_heatmap = batch["target_heatmap"].to(device)
+            target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
             B, C, H, W = target_heatmap.shape
 
             optimizer.zero_grad()
@@ -175,7 +175,7 @@ def train():
                 for batch in tqdm(dataloader_val, desc="Validating", leave=False, disable=disable_tqdm):
                     # 1. 验证集验证
                     cond_heatmap = batch["cond_heatmap"].to(device)
-                    target_heatmap = batch["target_heatmap"].to(device)
+                    target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
                     B, C, H, W = target_heatmap.shape
 
                     t = torch.randint(1, T_DIFFUSION, [B], device=device)
@@ -236,8 +236,8 @@ def get_nms_sampling_count():
     ]
 
 def full_generate(heatmap, maskGIT, cond_heatmap: torch.Tensor, diffusion: Diffusion):
-    fake_heatmap_cond = diffusion.sample(heatmap, cond_heatmap)
-    fake_heatmap_uncond = diffusion.sample(heatmap, torch.zeros_like(cond_heatmap))
+    fake_heatmap_cond = (diffusion.sample(heatmap, cond_heatmap) + 1) / 2
+    fake_heatmap_uncond = (diffusion.sample(heatmap, torch.zeros_like(cond_heatmap)) + 1) / 2
     fake_heatmap = fake_heatmap_uncond + W * (fake_heatmap_uncond - fake_heatmap_cond) # [B, C, H, W]
     return maskGIT_generate(maskGIT, cond_heatmap.shape[0], fake_heatmap)
 

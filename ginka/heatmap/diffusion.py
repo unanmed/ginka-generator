@@ -9,7 +9,7 @@ class Diffusion:
         # cosine schedule（推荐）
         steps = torch.arange(T + 1, dtype=torch.float32)
         s = 0.1
-        f = torch.cos(((steps / T) + s) / (1 + s) * math.pi * 0.5) ** 2
+        f = torch.cos(((steps / (T + 1)) + s) / (1 + s) * math.pi * 0.5) ** 2
         alpha_bar = f / f[0]
 
         self.alpha_bar = alpha_bar.to(device)
@@ -51,3 +51,4 @@ class Diffusion:
 if __name__ == '__main__':
     diff = Diffusion("cpu")
     print(diff.sqrt_one_minus_ab)
+    print(diff.sqrt_ab)

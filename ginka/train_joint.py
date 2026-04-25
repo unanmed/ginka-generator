@@ -233,7 +233,7 @@ def validate(model, maskgit, diffusion, dataloader, ce_weight: float, tile_dict)
         preview_idx = 0
         for batch in tqdm(dataloader, desc="Validating", leave=False, disable=disable_tqdm):
             cond_heatmap = batch["cond_heatmap"].to(device)
-            target_heatmap = batch["target_heatmap"].to(device)
+            target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
             target_map = batch["target_map"].to(device)
             batch_size, _, map_height, map_width = target_heatmap.shape
 
@@ -244,7 +244,7 @@ def validate(model, maskgit, diffusion, dataloader, ce_weight: float, tile_dict)
             pred_noise = model(x_t, cond_heatmap, t)
             diffusion_loss = F.mse_loss(pred_noise, noise)
 
-            generated_heatmap = predict_x0(diffusion, x_t, pred_noise, t)
+            generated_heatmap = (predict_x0(diffusion, x_t, pred_noise, t) + 1) / 2
             maskgit_loss = maskgit_joint_loss(maskgit, generated_heatmap, target_map)
 
             loss = diffusion_loss + ce_weight * maskgit_loss
@@ -325,7 +325,7 @@ def train():
 
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
             cond_heatmap = batch["cond_heatmap"].to(device)
-            target_heatmap = batch["target_heatmap"].to(device)
+            target_heatmap = batch["target_heatmap"].to(device) * 2 - 1
             target_map = batch["target_map"].to(device)
             batch_size = target_heatmap.shape[0]
 
@@ -348,7 +348,7 @@ def train():
             if use_unconditional_branch:
                 pred_noise_for_joint = model(x_t, cond_heatmap, t)
 
-            generated_heatmap = predict_x0(diffusion, x_t, pred_noise_for_joint, t)
+            generated_heatmap = (predict_x0(diffusion, x_t, pred_noise_for_joint, t) + 1) / 2
             print(torch.mean(generated_heatmap), torch.std(generated_heatmap), generated_heatmap.shape)
             maskgit_loss = maskgit_joint_loss(maskgit, generated_heatmap, target_map)
 
