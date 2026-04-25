@@ -185,7 +185,7 @@ def train():
                     
                     pred_noise = model(x_t, cond_heatmap, t)
                     
-                    loss = F.l1_loss(pred_noise, noise)
+                    loss = F.mse_loss(pred_noise, noise)
                     
                     val_loss_total += loss.detach()
                 
@@ -238,10 +238,11 @@ def get_nms_sampling_count():
 def full_generate(heatmap, maskGIT, cond_heatmap: torch.Tensor, diffusion: Diffusion):
     fake_heatmap_cond = diffusion.sample(heatmap, cond_heatmap)
     fake_heatmap_uncond = diffusion.sample(heatmap, torch.zeros_like(cond_heatmap))
-    fake_heatmap = fake_heatmap_uncond + W * (fake_heatmap_uncond - fake_heatmap_cond)
+    fake_heatmap = fake_heatmap_uncond + W * (fake_heatmap_uncond - fake_heatmap_cond) # [B, C, H, W]
     return maskGIT_generate(maskGIT, cond_heatmap.shape[0], fake_heatmap)
 
 def maskGIT_generate(maskGIT, B: int, heatmap: torch.Tensor):
+    # heatmap: [B, C, H, W]
     map = torch.full((B, MAP_H * MAP_W), MASK_TOKEN).to(device)
     for i in range(GENERATE_STEP):
         # 1. 预测

@@ -349,6 +349,7 @@ def train():
                 pred_noise_for_joint = model(x_t, cond_heatmap, t)
 
             generated_heatmap = predict_x0(diffusion, x_t, pred_noise_for_joint, t)
+            print(torch.mean(generated_heatmap), torch.std(generated_heatmap), generated_heatmap.shape)
             maskgit_loss = maskgit_joint_loss(maskgit, generated_heatmap, target_map)
 
             loss = diffusion_loss + CE_WEIGHT * maskgit_loss

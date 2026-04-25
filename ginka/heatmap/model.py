@@ -29,20 +29,20 @@ class GinkaHeatmapModel(nn.Module):
     def forward(self, input: torch.Tensor, cond: torch.Tensor, t: torch.Tensor):
         # input: [B, heatmap_dim, H, W] 噪声
         # cond: [B, heatmap_dim, H, W] 点图
-        # t: [B, 1]
+        # t: [B]
         input = self.input(input, t) # [B, d_model, H, W]
         cond = self.cond(cond, t) # [B, d_model, H, W]
-        B, C, H, W = cond.shape
-        cond_tokens = cond.view(B, C, H * W).permute(0, 2, 1) # [B, H * W, d_model]
-        scale = torch.sigmoid(cond)
-        hidden = input * (1 + scale) + cond
+        B, C, H, W = input.shape
+        scale = torch.sigmoid(cond) # [B, d_model, H, W]
+        hidden = input * (1 + scale) + cond # [B, d_model, H, W]
         hidden = hidden.view(B, C, H * W).permute(0, 2, 1) # [B, H * W, d_model]
-        hidden = hidden + self.pos_embedding
+        hidden = hidden + self.pos_embedding # [B, H * W, d_model]
         hidden = self.transformer(hidden) # [B, H * W, d_model]
-        attn, _ = self.cross_attn(hidden, cond_tokens, cond_tokens)
-        hidden = hidden + attn
+        cond_tokens = cond.view(B, C, H * W).permute(0, 2, 1) # [B, H * W, d_model]
+        attn, _ = self.cross_attn(hidden, cond_tokens, cond_tokens) # [B, H * W, d_model]
+        hidden = hidden + attn # [B, H * W, d_model]
         output = self.output_fc(hidden) # [B, H * W, heatmap_dim]
-        return output.view(B, H, W, self.heatmap_dim).permute(0, 3, 1, 2)
+        return output.view(B, H, W, self.heatmap_dim).permute(0, 3, 1, 2) # [B, heatmap_dim, H, W]
         
 if __name__ == "__main__":
     device = torch.device("cpu")
