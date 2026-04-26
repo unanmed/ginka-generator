@@ -15,9 +15,15 @@ class Transformer(nn.Module):
             num_layers=num_layers
         )
         
-    def forward(self, x):
-        # x: [B, L, d_model]
-        m = self.encoder(x)
-        out = self.decoder(x, m)
+    def forward(self, x, memory=None):
+        # x:      [B, S, d_model]  地图 token 序列
+        # memory: [B, L, d_model]  可选的 z 投影，用于 cross-attention
+        # 若 memory 为 None，则退化为原始自编解码行为（向后兼容）
+        enc_out = self.encoder(x)
+        if memory is not None:
+            # encoder 输出作为 query，z 作为 key/value
+            out = self.decoder(enc_out, memory)
+        else:
+            out = self.decoder(x, enc_out)
         return out
         
