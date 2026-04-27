@@ -131,7 +131,7 @@ class GinkaVQVAE(nn.Module):
         z_q, indices, commit_loss, entropy_loss = self.vq(z_e)
 
         vq_loss = self.beta * commit_loss + self.gamma * entropy_loss
-        return z_q, indices, vq_loss
+        return z_q, indices, vq_loss, commit_loss, entropy_loss
 
     def sample(self, B: int, device: torch.device) -> torch.Tensor:
         """

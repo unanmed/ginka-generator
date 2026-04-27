@@ -364,16 +364,16 @@ class GinkaVQDataset(Dataset):
             return flat
 
         elif subset == 'B':
-            # 仅保留 floor(0) 和 wall(1)
+            # 仅保留 wall(1)，floor(0) 和其他非墙内容全部 mask
             flat = raw.reshape(-1).copy()
-            keep = (flat == self.FLOOR) | (flat == self.WALL)
+            keep = (flat == self.WALL)
             flat[~keep] = self.MASK_ID
             return flat
 
         elif subset == 'C':
             # Subset B + 随机 mask 部分 wall
             flat = raw.reshape(-1).copy()
-            keep = (flat == self.FLOOR) | (flat == self.WALL)
+            keep = (flat == self.WALL)
             flat[~keep] = self.MASK_ID
 
             wall_idx = np.where(flat == self.WALL)[0]
@@ -385,14 +385,18 @@ class GinkaVQDataset(Dataset):
             return flat
 
         else:  # D
-            # 仅保留 floor(0)、wall(1) 和 entrance(10)
+            # 仅保留 wall(1) 和 entrance(10)，floor(0) 和其他非墙内容全部 mask
             flat = raw.reshape(-1).copy()
-            keep = (
-                (flat == self.FLOOR)
-                | (flat == self.WALL)
-                | (flat == self.ENTRANCE)
-            )
+            keep = (flat == self.WALL) | (flat == self.ENTRANCE)
             flat[~keep] = self.MASK_ID
+
+            # 随机 mask 部分 wall（模拟真实场景，与子集 C 一致）
+            wall_idx = np.where(flat == self.WALL)[0]
+            if len(wall_idx) > 0:
+                ratio = random.random() * self.wall_mask_ratio
+                n = max(1, int(len(wall_idx) * ratio))
+                chosen = np.random.choice(wall_idx, n, replace=False)
+                flat[chosen] = self.MASK_ID
             return flat
 
     def __getitem__(self, idx):

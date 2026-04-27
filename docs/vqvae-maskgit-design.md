@@ -391,7 +391,7 @@ $$\mathcal{L} = \mathcal{L}_{CE}(\text{MaskGIT}) + \beta \cdot \mathcal{L}_{comm
 - [x] 确定是否保留标量 cond（暂不使用）
 - [x] 确定训练子集划分与各场景比例
 - [x] 实现 VQ-VAE 编码器模块（Transformer + VQ）
-- [ ] 改造 `GinkaMaskGIT.forward()` 接受 z，替换热力图分支
-- [ ] 实现四种子集采样逻辑（`dataset.py` 新增多子集 Dataset 或采样权重）
-- [ ] 实现子集 B/C/D 的输入构造函数（按规则清除 tile、保留墙壁/入口）
-- [ ] 编写联合训练脚本，整合 VQ 损失与 MaskGIT 交叉熵损失
+- [x] 改造 `GinkaMaskGIT.forward()` 接受 z，替换热力图分支
+- [x] 实现四种子集采样逻辑（`dataset.py` 新增多子集 Dataset 或采样权重）
+- [x] 实现子集 B/C/D 的输入构造函数（按规则清除 tile、保留墙壁/入口）
+- [x] 编写联合训练脚本，整合 VQ 损失与 MaskGIT 交叉熵损失
