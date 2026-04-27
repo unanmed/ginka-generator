@@ -38,14 +38,14 @@ from shared.image import matrix_to_image_cv
 BATCH_SIZE       = 64
 NUM_CLASSES      = 16
 MASK_TOKEN       = 15
-GENERATE_STEP    = 12    # 推理时 MaskGIT 迭代步数
+GENERATE_STEP    = 18    # 推理时 MaskGIT 迭代步数
 MAP_SIZE         = 13 * 13
 MAP_H = MAP_W    = 13
 LABEL_SMOOTHING  = 0.0
 
 # VQ-VAE 超参
-VQ_L      = 64   # summary token 数量（即 z 的序列长度）
-VQ_K      = 1    # codebook 大小
+VQ_L      = 16   # summary token 数量（即 z 的序列长度）
+VQ_K      = 2    # codebook 大小
 VQ_D_Z    = 64   # codebook 嵌入维度
 VQ_D_MODEL= 128
 VQ_NHEAD  = 4
@@ -55,12 +55,12 @@ VQ_BETA   = 0.25  # commit loss 权重
 VQ_GAMMA  = 0.1   # entropy loss 权重
 
 # MaskGIT 超参
-MG_D_MODEL  = 192
+MG_D_MODEL  = 256
 MG_NHEAD    = 8
 MG_LAYERS   = 4
-MG_DIM_FF   = 512
-MG_Z_DROPOUT     = 0.15  # 训练时以此概率把 z 替换为随机噪声
-MG_STRUCT_DROPOUT= 0.15  # 训练时以此概率将结构标签替换为 null（无条件占位）
+MG_DIM_FF   = 1024
+MG_Z_DROPOUT     = 0.1  # 训练时以此概率把 z 替换为随机噪声
+MG_STRUCT_DROPOUT= 0.1  # 训练时以此概率将结构标签替换为 null（无条件占位）
 
 # 验证时对每条样本额外采样的 z 数量（0 = 只用真实 z）
 N_Z_SAMPLES = 3
