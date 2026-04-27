@@ -376,7 +376,7 @@ $$\mathcal{L} = \mathcal{L}_{CE}(\text{MaskGIT}) + \beta \cdot \mathcal{L}_{comm
 
 ## 待探索事项
 
-- 合适的 K、L 取值（建议从 K=16, L=2 开始实验）
+- 合适的 K、L 取值（建议从 K=16, L=2 开始实验），K=1, L=64 可能比较合适。
 - z dropout 的最优概率
 - 若后续 codebook collapse：引入 EMA 更新 + 重置机制
 - 若后续需要更细粒度控制：加入标量 cond（需对推理侧标量做随机扰动处理）

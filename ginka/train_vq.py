@@ -59,7 +59,8 @@ MG_D_MODEL  = 192
 MG_NHEAD    = 8
 MG_LAYERS   = 4
 MG_DIM_FF   = 512
-MG_Z_DROPOUT= 0.15  # 训练时以此概率把 z 替换为随机噪声
+MG_Z_DROPOUT     = 0.15  # 训练时以此概率把 z 替换为随机噪声
+MG_STRUCT_DROPOUT= 0.15  # 训练时以此概率将结构标签替换为 null（无条件占位）
 
 # 验证时对每条样本额外采样的 z 数量（0 = 只用真实 z）
 N_Z_SAMPLES = 3
@@ -106,6 +107,7 @@ def maskgit_generate(
     z: torch.Tensor,
     steps: int = GENERATE_STEP,
     init_map: torch.Tensor = None,
+    struct_cond: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     迭代生成地图（cosine schedule unmasking）。
@@ -133,7 +135,7 @@ def maskgit_generate(
         if not generatable.any():
             break
 
-        logits  = model_mg(map_seq, z)                          # [B, S, C]
+        logits  = model_mg(map_seq, z, struct_cond=struct_cond) # [B, S, C]
         probs   = F.softmax(logits, dim=-1)
         dist    = torch.distributions.Categorical(probs)
         sampled = dist.sample()                                 # [B, S]
@@ -279,7 +281,8 @@ def validate(
         B          = raw_map.shape[0]
 
         z_q, _, vq_loss, _, _ = model_vq(raw_map)
-        logits = model_mg(masked_map, z_q)
+        struct_cond_b = batch["struct_cond"].to(device)  # [B, 4]
+        logits = model_mg(masked_map, z_q, struct_cond=struct_cond_b)
         mask   = (masked_map == MASK_TOKEN)
 
         ce_loss   = F.cross_entropy(
@@ -294,9 +297,10 @@ def validate(
             s = subsets[i]
             if captured[s] is None:
                 captured[s] = {
-                    "raw":    raw_map[i:i+1].clone(),
-                    "masked": masked_map[i:i+1].clone(),
-                    "z_q":    z_q[i:i+1].clone(),
+                    "raw":         raw_map[i:i+1].clone(),
+                    "masked":      masked_map[i:i+1].clone(),
+                    "z_q":         z_q[i:i+1].clone(),
+                    "struct_cond": struct_cond_b[i:i+1].clone(),
                 }
 
         if all(v is not None for v in captured.values()):
@@ -307,24 +311,24 @@ def validate(
         imgs = []
         for i in range(n):
             z_r = model_vq.sample(1, device)
-            gen = maskgit_generate(model_mg, z_r, init_map=cond_map)
+            gen = maskgit_generate(model_mg, z_r, init_map=cond_map)  # struct_cond=None 无条件
             imgs.append(label_image(make_map_image(gen[0], tile_dict), f"z_rand_{i + 1}"))
         return imgs
 
     # ── 场景1：标准掩码补全（子集 A）─────────────────────────────────────────
     if captured['A'] is not None:
         cap = captured['A']
-        raw, cond, z_q = cap['raw'], cap['masked'], cap['z_q']
+        raw, cond, z_q, sc = cap['raw'], cap['masked'], cap['z_q'], cap['struct_cond']
 
         real_img  = label_image(make_map_image(raw[0],  tile_dict), "ground truth")
         cond_img  = label_image(make_map_image(cond[0], tile_dict), "masked input")
 
         # 单步 argmax 预测（观察模型对掩码位置的瞬时判断）
-        pred      = model_mg(cond, z_q).argmax(dim=-1)[0]
+        pred      = model_mg(cond, z_q, struct_cond=sc).argmax(dim=-1)[0]
         pred_img  = label_image(make_map_image(pred, tile_dict), "z_real pred")
 
         # 迭代生成（从掩码输入出发，真实 z）
-        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond)
+        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond, struct_cond=sc)
         gen_r_img = label_image(make_map_image(gen_real[0], tile_dict), "z_real gen")
 
         row = [real_img, cond_img, pred_img, gen_r_img] + _rand_gens(cond, N_Z_SAMPLES)
@@ -333,11 +337,11 @@ def validate(
     # ── 场景2：墙壁辅助生成（子集 B）─────────────────────────────────────────
     if captured['B'] is not None:
         cap = captured['B']
-        raw, cond, z_q = cap['raw'], cap['masked'], cap['z_q']
+        raw, cond, z_q, sc = cap['raw'], cap['masked'], cap['z_q'], cap['struct_cond']
 
         real_img  = label_image(make_map_image(raw[0],  tile_dict), "ground truth")
         cond_img  = label_image(make_map_image(cond[0], tile_dict), "wall-only input")
-        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond)
+        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond, struct_cond=sc)
         gen_r_img = label_image(make_map_image(gen_real[0], tile_dict), "z_real gen")
 
         row = [real_img, cond_img, gen_r_img] + _rand_gens(cond, N_Z_SAMPLES)
@@ -346,11 +350,11 @@ def validate(
     # ── 场景3：稀疏墙壁条件生成（子集 C）────────────────────────────────────
     if captured['C'] is not None:
         cap = captured['C']
-        raw, cond, z_q = cap['raw'], cap['masked'], cap['z_q']
+        raw, cond, z_q, sc = cap['raw'], cap['masked'], cap['z_q'], cap['struct_cond']
 
         real_img  = label_image(make_map_image(raw[0],  tile_dict), "ground truth")
         cond_img  = label_image(make_map_image(cond[0], tile_dict), "sparse wall input")
-        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond)
+        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond, struct_cond=sc)
         gen_r_img = label_image(make_map_image(gen_real[0], tile_dict), "z_real gen")
 
         row = [real_img, cond_img, gen_r_img] + _rand_gens(cond, N_Z_SAMPLES)
@@ -359,11 +363,11 @@ def validate(
     # ── 场景4：墙壁+入口条件生成（子集 D）───────────────────────────────────
     if captured['D'] is not None:
         cap = captured['D']
-        raw, cond, z_q = cap['raw'], cap['masked'], cap['z_q']
+        raw, cond, z_q, sc = cap['raw'], cap['masked'], cap['z_q'], cap['struct_cond']
 
         real_img  = label_image(make_map_image(raw[0],  tile_dict), "ground truth")
         cond_img  = label_image(make_map_image(cond[0], tile_dict), "wall+entrance input")
-        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond)
+        gen_real  = maskgit_generate(model_mg, z_q, init_map=cond, struct_cond=sc)
         gen_r_img = label_image(make_map_image(gen_real[0], tile_dict), "z_real gen")
 
         row = [real_img, cond_img, gen_r_img] + _rand_gens(cond, N_Z_SAMPLES)
@@ -403,6 +407,7 @@ def train():
         num_layers=MG_LAYERS,
         map_size=MAP_SIZE,
         z_dropout=MG_Z_DROPOUT,
+        struct_dropout=MG_STRUCT_DROPOUT,
     ).to(device)
 
     vq_params  = sum(p.numel() for p in model_vq.parameters())
@@ -419,6 +424,8 @@ def train():
     dataset_val = GinkaVQDataset(
         args.validate,
         subset_weights=SUBSET_WEIGHTS,
+        room_thresholds=dataset_train.room_th,
+        branch_thresholds=dataset_train.branch_th,
     )
     dataloader_train = DataLoader(
         dataset_train, batch_size=BATCH_SIZE, shuffle=True,
@@ -481,8 +488,9 @@ def train():
             # 1. VQ-VAE 编码真实地图 → z_q
             z_q, _, vq_loss, commit_loss, entropy_loss = model_vq(raw_map)  # z_q: [B, L, d_z]
 
-            # 2. MaskGIT 以掩码地图 + z 预测原始 tile
-            logits = model_mg(masked_map, z_q)            # [B, 169, C]
+            # 2. MaskGIT 以掩码地图 + z + 结构标签预测原始 tile
+            struct_cond = batch["struct_cond"].to(device)  # [B, 4]
+            logits = model_mg(masked_map, z_q, struct_cond=struct_cond)  # [B, 169, C]
 
             # 3. 只对被 mask 的位置计算 CE loss
             mask   = (masked_map == MASK_TOKEN)           # [B, 169] bool

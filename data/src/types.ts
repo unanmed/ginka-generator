@@ -48,6 +48,15 @@ export interface GinkaTrainData {
     map: number[][];
     size: [number, number];
     heatmap?: number[][][];
+    // ── 结构标签（新增）──────────────────────────────
+    /** 对称性：[symmetryH, symmetryV, symmetryC]，0 或 1 */
+    symmetry: [number, number, number];
+    /** 是否外包围墙壁，0 或 1 */
+    outerWall: number;
+    /** 房间数量原始值 */
+    roomCount: number;
+    /** 高连接度分支节点数量原始值 */
+    highDegBranchCount: number;
 }
 
 export interface GinkaDataset {

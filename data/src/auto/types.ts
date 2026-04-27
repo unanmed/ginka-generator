@@ -112,6 +112,20 @@ export interface IFloorInfo {
     readonly entryHeatmap: number[][];
     /** 门热力图 */
     readonly doorHeatmap: number[][];
+
+    // ── 结构标签（新增）──────────────────────────────
+    /** 左右对称（基于 convertedMap 完全匹配） */
+    readonly symmetryH: boolean;
+    /** 上下对称 */
+    readonly symmetryV: boolean;
+    /** 中心对称 */
+    readonly symmetryC: boolean;
+    /** 是否外包围墙壁（最外圈墙壁+入口占比 > 90%） */
+    readonly outerWall: boolean;
+    /** 房间数量原始值（供 Python 两趟扫描使用） */
+    readonly roomCount: number;
+    /** 高连接度分支节点数量原始值（供 Python 两趟扫描使用） */
+    readonly highDegBranchCount: number;
 }
 
 export interface IMapBlockConfig {

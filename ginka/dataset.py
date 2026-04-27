@@ -232,6 +232,14 @@ class GinkaJointDataset(Dataset):
         }
 
 
+def _compute_symmetry(target_np: np.ndarray) -> tuple:
+    """从 numpy 地图矩阵中直接计算三种对称性，O(H*W)"""
+    sym_h = bool(np.all(target_np == target_np[:, ::-1]))
+    sym_v = bool(np.all(target_np == target_np[::-1, :]))
+    sym_c = bool(np.all(target_np == target_np[::-1, ::-1]))
+    return int(sym_h), int(sym_v), int(sym_c)
+
+
 class GinkaVQDataset(Dataset):
     """
     用于 VQ-VAE + MaskGIT 联合训练的多子集数据集。
@@ -259,13 +267,17 @@ class GinkaVQDataset(Dataset):
         data_path: str,
         subset_weights: tuple = (0.5, 0.2, 0.2, 0.1),
         wall_mask_ratio: float = 0.3,
+        room_thresholds: tuple = None,
+        branch_thresholds: tuple = None,
     ):
         """
         Args:
-            data_path:        JSON 数据文件路径
-            subset_weights:   子集 (A, B, C, D) 的采样权重，自动归一化
-            wall_mask_ratio:  Subset C 中额外随机 mask 的 wall tile 比例上限
-                              （每次从 [0, wall_mask_ratio] 均匀采样实际比例）
+            data_path:          JSON 数据文件路径
+            subset_weights:     子集 (A, B, C, D) 的采样权重，自动归一化
+            wall_mask_ratio:    Subset C 中额外随机 mask 的 wall tile 比例上限
+                                （每次从 [0, wall_mask_ratio] 均匀采样实际比例）
+            room_thresholds:    (th1, th2) 房间数量等频分箱阈值；为 None 时自动从当前数据计算（训练集）
+            branch_thresholds:  (th1, th2) 分支数量等频分箱阈值；为 None 时自动从当前数据计算（训练集）
         """
         self.data = load_data(data_path)
         self.wall_mask_ratio = wall_mask_ratio
@@ -274,6 +286,35 @@ class GinkaVQDataset(Dataset):
         total_w = sum(subset_weights)
         normalized = [x / total_w for x in subset_weights]
         self.subset_cumw = [sum(normalized[:i + 1]) for i in range(len(normalized))]
+
+        # ── 两趟扫描：计算等频分箱阈值 ──────────────────────────────
+        room_counts   = [item['roomCount']           for item in self.data]
+        branch_counts = [item['highDegBranchCount']  for item in self.data]
+
+        if room_thresholds is None:
+            n  = len(room_counts)
+            rs = sorted(room_counts)
+            bs = sorted(branch_counts)
+            th1_r, th2_r = rs[n // 3], rs[2 * n // 3]
+            th1_b, th2_b = bs[n // 3], bs[2 * n // 3]
+            # 防止 Medium 等级为空
+            if th1_r == th2_r:
+                th2_r = th1_r + 1
+            if th1_b == th2_b:
+                th2_b = th1_b + 1
+            self.room_th   = (th1_r, th2_r)
+            self.branch_th = (th1_b, th2_b)
+        else:
+            self.room_th   = room_thresholds
+            self.branch_th = branch_thresholds
+
+        def to_level(v: int, th: tuple) -> int:
+            return 0 if v < th[0] else (1 if v < th[1] else 2)
+
+        # 回填等级字段
+        for item in self.data:
+            item['roomCountLevel'] = to_level(item['roomCount'],           self.room_th)
+            item['branchLevel']    = to_level(item['highDegBranchCount'],  self.branch_th)
 
     def __len__(self):
         return len(self.data)
@@ -407,11 +448,23 @@ class GinkaVQDataset(Dataset):
         masked_np = self._apply_subset(raw_np, subset)                 # [H*W]
         raw_flat  = raw_np.reshape(-1)                                 # [H*W]
 
+        # 对称性：在增强后重新计算
+        sym_h, sym_v, sym_c = _compute_symmetry(raw_np)
+        cond_sym = sym_h * 4 + sym_v * 2 + sym_c  # [0, 7]
+
+        # 其余结构标签：增强不改变拓扑结构，直接读取
+        cond_room   = item['roomCountLevel']   # 0/1/2
+        cond_branch = item['branchLevel']      # 0/1/2
+        cond_outer  = item['outerWall']        # 0/1
+
+        struct_cond = torch.LongTensor([cond_sym, cond_room, cond_branch, cond_outer])
+
         return {
-            "raw_map":    torch.LongTensor(raw_flat),         # VQ-VAE 编码器输入
-            "masked_map": torch.LongTensor(masked_np),        # MaskGIT 输入
-            "target_map": torch.LongTensor(raw_flat.copy()),  # CE loss ground truth
-            "subset":     subset,                             # 调试/统计用
+            "raw_map":     torch.LongTensor(raw_flat),         # VQ-VAE 编码器输入
+            "masked_map":  torch.LongTensor(masked_np),        # MaskGIT 输入
+            "target_map":  torch.LongTensor(raw_flat.copy()),  # CE loss ground truth
+            "subset":      subset,                             # 调试/统计用
+            "struct_cond": struct_cond,                        # [4]，供模型 Embedding 查表
         }
 
 

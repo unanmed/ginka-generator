@@ -3,8 +3,10 @@ import {
     GraphNodeType,
     IAutoLabelConfig,
     IFloorInfo,
+    IMapGraph,
     IMapTileConverter,
     ITowerInfo,
+    MapGraphNode,
     TowerColor
 } from './types';
 import {
@@ -154,6 +156,180 @@ export function computeWallDensityStd(
 }
 
 /**
+ * 计算地图的三种对称性（基于 convertedMap，完全匹配才标记为 true）
+ */
+function computeSymmetry(map: number[][]): {
+    symmetryH: boolean;
+    symmetryV: boolean;
+    symmetryC: boolean;
+} {
+    const H = map.length;
+    const W = H > 0 ? map[0].length : 0;
+    let symmetryH = true;
+    let symmetryV = true;
+    let symmetryC = true;
+
+    outer: for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const tile = map[y][x];
+            if (symmetryH && tile !== map[y][W - 1 - x]) symmetryH = false;
+            if (symmetryV && tile !== map[H - 1 - y][x]) symmetryV = false;
+            if (symmetryC && tile !== map[H - 1 - y][W - 1 - x])
+                symmetryC = false;
+            if (!symmetryH && !symmetryV && !symmetryC) break outer;
+        }
+    }
+    return { symmetryH, symmetryV, symmetryC };
+}
+
+/**
+ * 检测地图最外圈中墙壁 + 入口的占比是否超过 90%
+ * @param map convertedMap
+ * @param wall 墙壁图块编号
+ * @param entry 入口图块编号
+ */
+function computeOuterWall(
+    map: number[][],
+    wall: number,
+    entry: number
+): boolean {
+    const H = map.length;
+    const W = H > 0 ? map[0].length : 0;
+    if (H < 2 || W < 2) return false;
+
+    let borderCount = 0;
+    let wallOrEntry = 0;
+
+    const check = (tile: number) => {
+        borderCount++;
+        if (tile === wall || tile === entry) wallOrEntry++;
+    };
+
+    for (let x = 0; x < W; x++) {
+        check(map[0][x]);
+        check(map[H - 1][x]);
+    }
+    for (let y = 1; y < H - 1; y++) {
+        check(map[y][0]);
+        check(map[y][W - 1]);
+    }
+
+    return borderCount > 0 && wallOrEntry / borderCount > 0.9;
+}
+
+/**
+ * 统计拓扑图中符合"房间"定义的连通区域数量。
+ *
+ * 算法：
+ *   1. 以 Empty / Resource 节点为顶点，在它们之间 BFS，
+ *      得到若干"候选区域"（Branch 节点作为边界，不被合并）。
+ *   2. 对每个候选区域检查三个条件：
+ *      a. 区域内至少一个节点有 Branch 类型邻居
+ *      b. 区域内所有格子总数 >= 4
+ *      c. 所有格子的外接矩形宽 > 1 且高 > 1
+ *
+ * @param graph  拓扑图
+ * @param width  地图宽度（用于平坦坐标解码）
+ */
+function computeRoomCount(graph: IMapGraph, width: number): number {
+    const allEmptyResource = new Set<MapGraphNode>();
+    for (const node of graph.nodeMap.values()) {
+        if (
+            node.type === GraphNodeType.Empty ||
+            node.type === GraphNodeType.Resource
+        ) {
+            allEmptyResource.add(node);
+        }
+    }
+
+    let roomCount = 0;
+    const visited = new Set<MapGraphNode>();
+
+    for (const startNode of allEmptyResource) {
+        if (visited.has(startNode)) continue;
+
+        const regionNodes = new Set<MapGraphNode>();
+        const queue: MapGraphNode[] = [startNode];
+        visited.add(startNode);
+
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            regionNodes.add(current);
+            for (const nb of current.neighbors) {
+                if (
+                    !visited.has(nb) &&
+                    (nb.type === GraphNodeType.Empty ||
+                        nb.type === GraphNodeType.Resource)
+                ) {
+                    visited.add(nb);
+                    queue.push(nb);
+                }
+            }
+        }
+
+        // 条件 a：区域内任一节点有 Branch 邻居
+        let hasBranch = false;
+        outer: for (const node of regionNodes) {
+            for (const nb of node.neighbors) {
+                if (nb.type === GraphNodeType.Branch) {
+                    hasBranch = true;
+                    break outer;
+                }
+            }
+        }
+        if (!hasBranch) continue;
+
+        // 收集区域内所有格子，计算总数和外接矩形
+        let totalTiles = 0;
+        let minX = Infinity,
+            maxX = -Infinity,
+            minY = Infinity,
+            maxY = -Infinity;
+
+        for (const node of regionNodes) {
+            totalTiles += node.tiles.size;
+            for (const t of node.tiles) {
+                const x = t % width;
+                const y = (t - x) / width;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+
+        // 条件 b：总格子数 >= 4
+        if (totalTiles < 4) continue;
+
+        // 条件 c：外接矩形宽高均 > 1
+        if (maxX - minX < 1 || maxY - minY < 1) continue;
+
+        roomCount++;
+    }
+
+    return roomCount;
+}
+
+/**
+ * 统计邻居数 >= 3 的分支节点数量（高连接度分支节点）
+ * @param graph 拓扑图
+ */
+function computeHighDegBranchCount(graph: IMapGraph): number {
+    let count = 0;
+    const visited = new Set<MapGraphNode>();
+
+    for (const node of graph.nodeMap.values()) {
+        if (visited.has(node)) continue;
+        visited.add(node);
+
+        if (node.type === GraphNodeType.Branch && node.neighbors.size >= 3) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/**
  * 根据地图矩阵解析出地图数据
  * @param tower 地图所属塔信息
  * @param map 地图矩阵
@@ -177,6 +353,17 @@ export function parseFloorInfo(
     );
     const flattened = map.flat();
     const area = flattened.length;
+    const width = map[0]?.length ?? 0;
+
+    // ── 结构标签计算 ─────────────────────────────────
+    const { symmetryH, symmetryV, symmetryC } = computeSymmetry(map);
+    const outerWall = computeOuterWall(
+        map,
+        config.classes.wall,
+        config.classes.entry
+    );
+    const roomCount = computeRoomCount(topo.graph, width);
+    const highDegBranchCount = computeHighDegBranchCount(topo.graph);
 
     let hasUselessBranch = false;
 
@@ -283,7 +470,13 @@ export function parseFloorInfo(
         doorHeatmap: gaussainHeatmap(
             generateHeatmap(map, doorTiles, config.heatmapKernel),
             config.guassainRadius
-        )
+        ),
+        symmetryH,
+        symmetryV,
+        symmetryC,
+        outerWall,
+        roomCount,
+        highDegBranchCount
     };
 
     return floorInfo;

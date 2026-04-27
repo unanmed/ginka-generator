@@ -361,7 +361,15 @@ const labelConfig: IAutoLabelConfig = {
                     0,
                     0,
                     0
-                ]
+                ],
+                symmetry: [
+                    info.symmetryH ? 1 : 0,
+                    info.symmetryV ? 1 : 0,
+                    info.symmetryC ? 1 : 0
+                ],
+                outerWall: info.outerWall ? 1 : 0,
+                roomCount: info.roomCount,
+                highDegBranchCount: info.highDegBranchCount
             };
             dataset.data[id] = data;
         });
