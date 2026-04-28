@@ -102,6 +102,9 @@ def parse_arguments():
     parser.add_argument("--checkpoint",  type=int,  default=5,
                         help="每隔多少 epoch 保存检查点并验证")
     parser.add_argument("--load_optim",  type=bool, default=True)
+    parser.add_argument("--freeze_vq",   type=bool, default=False,
+                        help="（方案 D 阶段 1）冻结 VQ 编码器，仅训练 MaskGIT。"
+                             "适用于预训练权重加载后的热身阶段。")
     return parser.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -582,6 +585,12 @@ def train():
         img  = cv2.imread(f"tiles/{file}", cv2.IMREAD_UNCHANGED)
         if img is not None:
             tile_dict[name] = img
+
+    # ---- 方案 D 阶段 1：冻结 VQ 编码器 ----
+    if args.freeze_vq:
+        for p in model_vq.parameters():
+            p.requires_grad_(False)
+        print("VQ 编码器已冻结（方案 D 阶段 1：MaskGIT 热身）。")
 
     # ---- 训练循环 ----
     for epoch in tqdm(range(start_epoch, start_epoch + args.epochs),

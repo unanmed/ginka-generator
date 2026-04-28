@@ -4,6 +4,66 @@ from .quantize import VectorQuantizer
 from typing import Tuple
 
 
+class VQDecodeHead(nn.Module):
+    """
+    VQ-VAE 预训练用轻量解码头（Cross-Attention 架构）。
+
+    将 z_q [B, L, d_z] 通过 Cross-Attention 还原为地图 logits [B, H*W, num_classes]。
+    预训练结束后此模块被丢弃，不影响联合训练路径。
+
+    架构：
+        可学习位置查询 [B, H*W, d_z]
+        → Cross-Attention (query=位置查询, key/value=z_q)
+        → LayerNorm
+        → 线性分类头 → logits [B, H*W, num_classes]
+    """
+
+    def __init__(
+        self,
+        num_classes: int,
+        d_z: int,
+        map_size: int,
+        nhead: int = 4,
+    ):
+        """
+        Args:
+            num_classes: tile 类别数
+            d_z:         z 向量维度（须与 GinkaVQVAE 的 d_z 一致）
+            map_size:    地图 token 总数（H * W）
+            nhead:       Cross-Attention 的注意力头数（d_z 须能被 nhead 整除）
+        """
+        super().__init__()
+
+        # 每个格子一个可学习位置查询
+        self.pos_queries = nn.Parameter(torch.randn(1, map_size, d_z) * 0.02)
+
+        # Cross-Attention：query=位置查询，key/value=z_q
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=d_z,
+            num_heads=nhead,
+            batch_first=True,
+            dropout=0.0,
+        )
+        self.norm = nn.LayerNorm(d_z)
+
+        # 最终分类头
+        self.classifier = nn.Linear(d_z, num_classes)
+
+    def forward(self, z_q: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            z_q: [B, L, d_z]
+
+        Returns:
+            logits: [B, map_size, num_classes]
+        """
+        B = z_q.shape[0]
+        q = self.pos_queries.expand(B, -1, -1)          # [B, map_size, d_z]
+        out, _ = self.cross_attn(q, z_q, z_q)           # [B, map_size, d_z]
+        out = self.norm(out)
+        return self.classifier(out)                      # [B, map_size, num_classes]
+
+
 class GinkaVQVAE(nn.Module):
     """
     VQ-VAE 风格地图编码器。
