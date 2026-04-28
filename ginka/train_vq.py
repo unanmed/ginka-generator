@@ -46,8 +46,8 @@ LABEL_SMOOTHING  = 0.0
 WALL_MASK_RATIO  = 0.8
 
 # VQ-VAE 超参
-VQ_L      = 32   # summary token 数量（即 z 的序列长度）
-VQ_K      = 1    # codebook 大小
+VQ_L      = 2   # summary token 数量（即 z 的序列长度）
+VQ_K      = 4    # codebook 大小
 VQ_D_Z    = 128   # codebook 嵌入维度
 VQ_D_MODEL= 192
 VQ_NHEAD  = 8

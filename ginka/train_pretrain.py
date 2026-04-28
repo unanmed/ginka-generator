@@ -40,8 +40,8 @@ MAP_SIZE     = 13 * 13
 MAP_H = MAP_W = 13
 
 # VQ-VAE 超参（保持与 train_vq.py 一致）
-VQ_L      = 32
-VQ_K      = 1
+VQ_L      = 2
+VQ_K      = 4
 VQ_D_Z    = 128
 VQ_D_MODEL= 192
 VQ_NHEAD  = 8

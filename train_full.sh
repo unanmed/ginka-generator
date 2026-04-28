@@ -21,12 +21,12 @@ EVAL_DATA="ginka-eval.json"
 
 # 阶段 0：预训练
 P0_EPOCHS=50
-P0_CHECKPOINT=5
+P0_CHECKPOINT=10
 P0_FINAL="result/pretrain/pretrain_final.pth"
 
 # 阶段 1：冻结编码器热身
 P1_EPOCHS=30
-P1_CHECKPOINT=5
+P1_CHECKPOINT=10
 P1_FINAL="result/joint/warmup_final.pth"
 
 # 阶段 2：完整联合训练
@@ -72,7 +72,7 @@ die() {
 # ------------------------------------------------------------------------------
 if [[ $START_PHASE -le 0 ]]; then
     log "阶段 0 / 3  VQ 编码器预训练  (epochs=${P0_EPOCHS})"
-    python -m ginka.train_pretrain \
+    python3 -u -m ginka.train_pretrain \
         --train       "$TRAIN_DATA"  \
         --validate    "$EVAL_DATA"   \
         --epochs      "$P0_EPOCHS"   \
@@ -90,7 +90,7 @@ fi
 # ------------------------------------------------------------------------------
 if [[ $START_PHASE -le 1 ]]; then
     log "阶段 1 / 3  MaskGIT 热身（VQ 冻结）  (epochs=${P1_EPOCHS})"
-    python -m ginka.train_vq \
+    python3 -u -m ginka.train_vq \
         --train       "$TRAIN_DATA"  \
         --validate    "$EVAL_DATA"   \
         --resume      True           \
@@ -116,7 +116,7 @@ fi
 # ------------------------------------------------------------------------------
 if [[ $START_PHASE -le 2 ]]; then
     log "阶段 2 / 3  完整联合训练  (epochs=${P2_EPOCHS})"
-    python -m ginka.train_vq \
+    python3 -u -m ginka.train_vq \
         --train       "$TRAIN_DATA"  \
         --validate    "$EVAL_DATA"   \
         --resume      True           \
