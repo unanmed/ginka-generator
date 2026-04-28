@@ -47,7 +47,7 @@ WALL_MASK_RATIO  = 0.8
 
 # VQ-VAE 超参
 VQ_L      = 2   # summary token 数量（即 z 的序列长度）
-VQ_K      = 4    # codebook 大小
+VQ_K      = 8    # codebook 大小
 VQ_D_Z    = 128   # codebook 嵌入维度
 VQ_D_MODEL= 192
 VQ_NHEAD  = 8
@@ -695,7 +695,7 @@ def train():
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
             f"Epoch {epoch + 1:4d} | "
             f"Loss {loss_total/n:.5f}  "
-            f"CE {ce_total/n:.5f}  "
+            f"Focal {ce_total/n:.5f}  "
             f"VQ {vq_loss_total/n:.5f}  "
             f"Commit {commit_total/n:.5f}  "
             f"Entropy {entropy_total/n:.5f}  "

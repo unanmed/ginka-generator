@@ -41,7 +41,7 @@ MAP_H = MAP_W = 13
 
 # VQ-VAE 超参（保持与 train_vq.py 一致）
 VQ_L      = 2
-VQ_K      = 4
+VQ_K      = 8
 VQ_D_Z    = 128
 VQ_D_MODEL= 192
 VQ_NHEAD  = 8
@@ -291,7 +291,7 @@ def train():
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
             f"Epoch {epoch + 1:4d} | "
             f"Loss {loss_total/n:.5f}  "
-            f"CE {ce_total/n:.5f}  "
+            f"Focal {ce_total/n:.5f}  "
             f"Commit {commit_total/n:.5f}  "
             f"Entropy {entropy_total/n:.5f} | "
             f"LR {scheduler.get_last_lr()[0]:.6f}"
