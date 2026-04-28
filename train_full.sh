@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 三阶段完整训练流水线
+# 三阶段完整训练流水线（方案 B：三通道分拆 VQ 编码器）
 #
-# 阶段 0  VQ 编码器预训练       train_pretrain.py
-# 阶段 1  MaskGIT 热身          train_vq.py  --freeze_vq True
+# 阶段 0  三通道分拆预训练       train_pretrain_split.py
+#           enc1(floor+wall) / enc2(+door+mob+entrance) / enc3(全图)
+#           各自仅对本通道 tile 计算 masked Focal Loss
+# 阶段 1  MaskGIT 热身          train_vq.py  --pretrain_split  --freeze_vq True
+#           三路编码器权重冻结，仅训练 MaskGIT
 # 阶段 2  完整联合训练           train_vq.py
+#           三路编码器 + MaskGIT 全量优化
 #
 # 用法：
 #   bash train_full.sh                  # 从头开始三阶段训练
@@ -19,10 +23,10 @@ set -euo pipefail
 TRAIN_DATA="ginka-dataset.json"
 EVAL_DATA="ginka-eval.json"
 
-# 阶段 0：预训练
+# 阶段 0：三通道分拆预训练
 P0_EPOCHS=100
 P0_CHECKPOINT=10
-P0_FINAL="result/pretrain/pretrain_final.pth"
+P0_FINAL="result/pretrain_split/split_final.pth"
 
 # 阶段 1：冻结编码器热身
 P1_EPOCHS=50
@@ -68,14 +72,15 @@ die() {
 }
 
 # ------------------------------------------------------------------------------
-# 阶段 0：VQ 编码器预训练
+# 阶段 0：三通道分拆 VQ 编码器预训练
 # ------------------------------------------------------------------------------
 if [[ $START_PHASE -le 0 ]]; then
-    log "阶段 0 / 3  VQ 编码器预训练  (epochs=${P0_EPOCHS})"
-    python3 -u -m ginka.train_pretrain \
-        --train       "$TRAIN_DATA"  \
-        --validate    "$EVAL_DATA"   \
-        --epochs      "$P0_EPOCHS"   \
+    log "阶段 0 / 3  三通道分拆 VQ 预训练  (epochs=${P0_EPOCHS})"
+    mkdir -p result/pretrain_split
+    python3 -u -m ginka.train_pretrain_split \
+        --train       "$TRAIN_DATA"   \
+        --validate    "$EVAL_DATA"    \
+        --epochs      "$P0_EPOCHS"    \
         --checkpoint  "$P0_CHECKPOINT"
 
     [[ -f "$P0_FINAL" ]] || die "阶段 0 未生成预期检查点：$P0_FINAL"
@@ -86,24 +91,23 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 阶段 1：MaskGIT 热身（VQ 编码器冻结）
+# 阶段 1：MaskGIT 热身（三路 VQ 编码器冻结）
 # ------------------------------------------------------------------------------
 if [[ $START_PHASE -le 1 ]]; then
-    log "阶段 1 / 3  MaskGIT 热身（VQ 冻结）  (epochs=${P1_EPOCHS})"
+    log "阶段 1 / 3  MaskGIT 热身（三路 VQ 冻结）  (epochs=${P1_EPOCHS})"
+    mkdir -p result/joint
     python3 -u -m ginka.train_vq \
-        --train       "$TRAIN_DATA"  \
-        --validate    "$EVAL_DATA"   \
-        --resume      True           \
-        --state       "$P0_FINAL"    \
-        --load_optim  False          \
-        --freeze_vq   True           \
-        --epochs      "$P1_EPOCHS"   \
-        --checkpoint  "$P1_CHECKPOINT"
+        --train          "$TRAIN_DATA"   \
+        --validate       "$EVAL_DATA"    \
+        --pretrain_split "$P0_FINAL"     \
+        --load_optim     False           \
+        --freeze_vq      True            \
+        --epochs         "$P1_EPOCHS"    \
+        --checkpoint     "$P1_CHECKPOINT"
 
-    # 阶段 1 最后一个检查点
+    # 取阶段 1 最后一个检查点，固定为阶段 2 入口
     _P1_LAST=$(ls -t result/joint/joint-*.pth 2>/dev/null | head -1)
     [[ -n "$_P1_LAST" ]] || die "阶段 1 未生成任何检查点（result/joint/joint-*.pth）"
-    # 复制为阶段 1 固定终态，供阶段 2 加载
     cp "$_P1_LAST" "$P1_FINAL"
     log "阶段 1 完成 → $P1_FINAL（来自 $_P1_LAST）"
 else
@@ -112,18 +116,18 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 阶段 2：完整联合训练
+# 阶段 2：完整联合训练（三路编码器 + MaskGIT 全量）
 # ------------------------------------------------------------------------------
 if [[ $START_PHASE -le 2 ]]; then
     log "阶段 2 / 3  完整联合训练  (epochs=${P2_EPOCHS})"
     python3 -u -m ginka.train_vq \
-        --train       "$TRAIN_DATA"  \
-        --validate    "$EVAL_DATA"   \
-        --resume      True           \
-        --state       "$P1_FINAL"    \
-        --load_optim  False          \
-        --freeze_vq   False          \
-        --epochs      "$P2_EPOCHS"   \
+        --train       "$TRAIN_DATA"   \
+        --validate    "$EVAL_DATA"    \
+        --resume      True            \
+        --state       "$P1_FINAL"     \
+        --load_optim  False           \
+        --freeze_vq   False           \
+        --epochs      "$P2_EPOCHS"    \
         --checkpoint  "$P2_CHECKPOINT"
 
     log "阶段 2 完成"

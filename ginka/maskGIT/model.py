@@ -83,12 +83,13 @@ class GinkaMaskGIT(nn.Module):
     ) -> torch.Tensor:
         """
         Args:
-            map:           [B, H*W]    掩码后的地图 token 序列（MASK token = 15）
-            z:             [B, L, d_z] VQ-VAE 量化后的离散隐变量
-            struct_cond:   [B, 4]      结构标签 LongTensor，顺序为
-                                       [cond_sym, cond_room, cond_branch, cond_outer]；
-                                       为 None 时等价于全 null（无条件模式）
-            dropout_struct: bool       强制将所有结构标签替换为 null（推理时无条件生成）
+            map:           [B, H*W]          掩码后的地图 token 序列（MASK token = 15）
+            z:             [B, L_total, d_z] VQ-VAE 量化后的离散隐变量；
+                                             方案 B 中 L_total = L1+L2+L3（三路 z 拼接）
+            struct_cond:   [B, 4]            结构标签 LongTensor，顺序为
+                                             [cond_sym, cond_room, cond_branch, cond_outer]；
+                                             为 None 时等价于全 null（无条件模式）
+            dropout_struct: bool             强制将所有结构标签替换为 null（推理时无条件生成）
 
         Returns:
             logits: [B, H*W, num_classes]

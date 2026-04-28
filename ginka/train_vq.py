@@ -45,16 +45,24 @@ MAP_H = MAP_W    = 13
 FOCAL_GAMMA      = 2.0   # focal loss 聚焦参数（越大越关注难例/稀有类别）
 WALL_MASK_RATIO  = 0.8
 
-# VQ-VAE 超参
-VQ_L      = 2   # summary token 数量（即 z 的序列长度）
-VQ_K      = 8    # codebook 大小
-VQ_D_Z    = 128   # codebook 嵌入维度
-VQ_D_MODEL= 192
-VQ_NHEAD  = 8
-VQ_LAYERS = 4
-VQ_DIM_FF = 512
-VQ_BETA   = 0.5  # commit loss 权重
-VQ_GAMMA  = 0.0   # entropy loss 权重
+# VQ-VAE 公共超参（三路编码器共用，方案 B 三通道分拆）
+VQ_L      = 2    # 每路码字序列长度（三路合计 L1+L2+L3 = 6）
+VQ_K      = 16   # codebook 大小
+VQ_D_Z    = 64   # codebook 嵌入维度（三路保持一致，便于拼接）
+VQ_BETA   = 0.25  # commit loss 权重
+VQ_GAMMA  = 0.1   # entropy loss 权重
+
+# 各通道编码器配置
+CH1_D_MODEL = 128; CH1_NHEAD = 4   # 通道 1：空间骨架（floor+wall）
+CH2_D_MODEL =  64; CH2_NHEAD = 4   # 通道 2：关卡门控
+CH3_D_MODEL =  64; CH3_NHEAD = 4   # 通道 3：收集资源
+VQ_LAYERS = 2
+VQ_DIM_FF = 256
+
+# 通道专属损失计算范围（用于监控验证召回率）
+CH1_LOSS = {1}
+CH2_LOSS = {2, 9, 10}
+CH3_LOSS = {3, 4, 5, 6, 7, 8}
 
 # MaskGIT 超参
 MG_D_MODEL  = 256
@@ -102,9 +110,12 @@ def parse_arguments():
     parser.add_argument("--checkpoint",  type=int,  default=5,
                         help="每隔多少 epoch 保存检查点并验证")
     parser.add_argument("--load_optim",  type=bool, default=True)
-    parser.add_argument("--freeze_vq",   type=bool, default=False,
-                        help="（方案 D 阶段 1）冻结 VQ 编码器，仅训练 MaskGIT。"
+    parser.add_argument("--freeze_vq",     type=bool, default=False,
+                        help="（方案 B 阶段 1）冻结三路 VQ 编码器，仅训练 MaskGIT。"
                              "适用于预训练权重加载后的热身阶段。")
+    parser.add_argument("--pretrain_split", type=str,  default="",
+                        help="（方案 B）三通道分拆预训练检查点路径；"
+                             "指定后将从该检查点加载三路编码器初始权重。")
     return parser.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -352,7 +363,9 @@ def make_random_struct_cond() -> torch.Tensor:
 
 @torch.no_grad()
 def validate(
-    model_vq: GinkaVQVAE,
+    enc1: GinkaVQVAE,
+    enc2: GinkaVQVAE,
+    enc3: GinkaVQVAE,
     model_mg: GinkaMaskGIT,
     dataloader_val: DataLoader,
     tile_dict: dict,
@@ -373,7 +386,8 @@ def validate(
       场景5 (scene5_random)     : 无数据集参照，随机稀疏墙壁种子 → 完全随机生成
           列: random seed | z_rand×(N+1)
     """
-    model_vq.eval()
+    for enc in [enc1, enc2, enc3]:
+        enc.eval()
     model_mg.eval()
 
     # 按 epoch 建立独立子文件夹，保留每次验证结果方便回溯
@@ -385,14 +399,33 @@ def validate(
     captured = {s: None for s in ('A', 'B', 'C', 'D')}
 
     # ── 计算 val loss + 捕获各子集样本 ──────────────────────────────────────
+    def _encode_three(s1, s2, s3):
+        """三路编码并拼接 z_q。"""
+        z_q1, _, _, vq1, _, _ = enc1(s1)
+        z_q2, _, _, vq2, _, _ = enc2(s2)
+        z_q3, _, _, vq3, _, _ = enc3(s3)
+        z_q = torch.cat([z_q1, z_q2, z_q3], dim=1)   # [B, L1+L2+L3, d_z]
+        vq_loss = vq1 + vq2 + vq3
+        return z_q, vq_loss
+
+    def _sample_three(B_size):
+        """三路随机采样并拼接 z。"""
+        z1 = enc1.sample(B_size, device)
+        z2 = enc2.sample(B_size, device)
+        z3 = enc3.sample(B_size, device)
+        return torch.cat([z1, z2, z3], dim=1)
+
     for batch in tqdm(dataloader_val, desc="Validating", leave=False, disable=disable_tqdm):
         raw_map    = batch["raw_map"].to(device)      # [B, 169]
         masked_map = batch["masked_map"].to(device)   # [B, 169]
         target_map = batch["target_map"].to(device)   # [B, 169]
+        s1         = batch["slice1"].to(device)
+        s2         = batch["slice2"].to(device)
+        s3         = batch["slice3"].to(device)
         subsets    = batch["subset"]                  # list of str
         B          = raw_map.shape[0]
 
-        z_q, _, _, vq_loss, _, _ = model_vq(raw_map)
+        z_q, vq_loss = _encode_three(s1, s2, s3)
         struct_cond_b = batch["struct_cond"].to(device)  # [B, 4]
         logits = model_mg(masked_map, z_q, struct_cond=struct_cond_b)
         mask   = (masked_map == MASK_TOKEN)
@@ -419,7 +452,7 @@ def validate(
     def _rand_gens(cond_map, n):
         imgs = []
         for i in range(n):
-            z_r = model_vq.sample(1, device)
+            z_r = _sample_three(1)
             gen = maskgit_generate(model_mg, z_r, init_map=cond_map)  # struct_cond=None 无条件
             imgs.append(label_image(make_map_image(gen[0], tile_dict), f"z_rand_{i + 1}"))
         return imgs
@@ -428,7 +461,7 @@ def validate(
     def _rand_gens_with_struct(cond_map, n):
         imgs = []
         for i in range(n):
-            z_r = model_vq.sample(1, device)
+            z_r  = _sample_three(1)
             sc_r = make_random_struct_cond()           # [1, 4] 随机合法标签
             gen  = maskgit_generate(model_mg, z_r, init_map=cond_map, struct_cond=sc_r)
             img  = label_image(make_map_image(gen[0], tile_dict), f"z_rand_{i + 1}")
@@ -539,15 +572,15 @@ def train():
     print(f"Using device: {device}")
     args = parse_arguments()
 
-    # ---- 模型 ----
-    model_vq = GinkaVQVAE(
-        num_classes=NUM_CLASSES,
-        L=VQ_L,   K=VQ_K,   d_z=VQ_D_Z,
-        d_model=VQ_D_MODEL, nhead=VQ_NHEAD,
-        num_layers=VQ_LAYERS, dim_ff=VQ_DIM_FF,
-        map_size=MAP_SIZE,
+    # ---- 三路编码器（方案 B 三通道分拆） ----
+    _vq_common = dict(
+        num_classes=NUM_CLASSES, L=VQ_L, K=VQ_K, d_z=VQ_D_Z,
+        num_layers=VQ_LAYERS, dim_ff=VQ_DIM_FF, map_size=MAP_SIZE,
         beta=VQ_BETA, gamma=VQ_GAMMA,
-    ).to(device)
+    )
+    enc1 = GinkaVQVAE(d_model=CH1_D_MODEL, nhead=CH1_NHEAD, **_vq_common).to(device)
+    enc2 = GinkaVQVAE(d_model=CH2_D_MODEL, nhead=CH2_NHEAD, **_vq_common).to(device)
+    enc3 = GinkaVQVAE(d_model=CH3_D_MODEL, nhead=CH3_NHEAD, **_vq_common).to(device)
 
     model_mg = GinkaMaskGIT(
         num_classes=NUM_CLASSES,
@@ -559,11 +592,11 @@ def train():
         struct_dropout=MG_STRUCT_DROPOUT,
     ).to(device)
 
-    vq_params  = sum(p.numel() for p in model_vq.parameters())
+    enc_params = sum(p.numel() for m in [enc1, enc2, enc3] for p in m.parameters())
     mg_params  = sum(p.numel() for p in model_mg.parameters())
-    print(f"VQ-VAE  参数量: {vq_params:,}  ({vq_params/1e6:.3f}M)")
-    print(f"MaskGIT 参数量: {mg_params:,}  ({mg_params/1e6:.3f}M)")
-    print(f"Total   参数量: {vq_params+mg_params:,}  ({(vq_params+mg_params)/1e6:.3f}M)")
+    print(f"Encoders 参数量（三路）: {enc_params:,}  ({enc_params/1e6:.3f}M)")
+    print(f"MaskGIT  参数量: {mg_params:,}  ({mg_params/1e6:.3f}M)")
+    print(f"Total    参数量: {enc_params+mg_params:,}  ({(enc_params+mg_params)/1e6:.3f}M)")
 
     # ---- 数据集 ----
     dataset_train = GinkaVQDataset(
@@ -587,19 +620,29 @@ def train():
         num_workers=0,
     )
 
-    # ---- 优化器（联合训练，两个模型共用一个 optimizer）----
-    all_params = list(model_vq.parameters()) + list(model_mg.parameters())
+    # ---- 优化器（联合训练，三路编码器 + MaskGIT 共用）----
+    enc_params_list = list(enc1.parameters()) + list(enc2.parameters()) + list(enc3.parameters())
+    all_params = enc_params_list + list(model_mg.parameters())
     optimizer  = optim.AdamW(all_params, lr=2e-4, weight_decay=1e-2)
     scheduler  = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epochs, eta_min=1e-6
     )
 
-    # ---- 续训 ----
+    # ---- 权重加载 ----
     start_epoch = 0
-    if args.resume:
+    if args.pretrain_split:
+        # 从分拆预训练检查点加载三路编码器初始权重（阶段 1 冻结热身前）
+        ckpt = torch.load(args.pretrain_split, map_location=device)
+        enc1.load_state_dict(ckpt["enc1"])
+        enc2.load_state_dict(ckpt["enc2"])
+        enc3.load_state_dict(ckpt["enc3"])
+        print(f"已加载分拆预训练编码器权重: {args.pretrain_split}")
+    elif args.resume:
         ckpt = torch.load(args.state, map_location=device)
-        model_vq.load_state_dict(ckpt["vq_state"],  strict=False)
-        model_mg.load_state_dict(ckpt["mg_state"],  strict=False)
+        enc1.load_state_dict(ckpt["enc1"],     strict=False)
+        enc2.load_state_dict(ckpt["enc2"],     strict=False)
+        enc3.load_state_dict(ckpt["enc3"],     strict=False)
+        model_mg.load_state_dict(ckpt["mg_state"], strict=False)
         if args.load_optim and ckpt.get("optim_state") is not None:
             optimizer.load_state_dict(ckpt["optim_state"])
         start_epoch = ckpt.get("epoch", 0)
@@ -613,16 +656,18 @@ def train():
         if img is not None:
             tile_dict[name] = img
 
-    # ---- 方案 D 阶段 1：冻结 VQ 编码器 ----
+    # ---- 方案 B 阶段 1：冻结三路 VQ 编码器 ----
     if args.freeze_vq:
-        for p in model_vq.parameters():
-            p.requires_grad_(False)
-        print("VQ 编码器已冻结（方案 D 阶段 1：MaskGIT 热身）。")
+        for enc in [enc1, enc2, enc3]:
+            for p in enc.parameters():
+                p.requires_grad_(False)
+        print("三路 VQ 编码器已冻结（阶段 1：MaskGIT 热身）。")
 
     # ---- 训练循环 ----
     for epoch in tqdm(range(start_epoch, start_epoch + args.epochs),
                       desc="Joint Training", disable=disable_tqdm):
-        model_vq.train()
+        for enc in [enc1, enc2, enc3]:
+            enc.train()
         model_mg.train()
 
         loss_total      = 0.0
@@ -638,13 +683,23 @@ def train():
             raw_map    = batch["raw_map"].to(device)      # [B, 169]
             masked_map = batch["masked_map"].to(device)   # [B, 169]
             target_map = batch["target_map"].to(device)   # [B, 169]
+            s1         = batch["slice1"].to(device)       # 通道 1 切片
+            s2         = batch["slice2"].to(device)       # 通道 2 切片
+            s3         = batch["slice3"].to(device)       # 通道 3 切片
 
             for s in batch["subset"]:
                 subset_stats[s] = subset_stats.get(s, 0) + 1
 
             # ---- 前向传播 ----
-            # 1. VQ-VAE 编码真实地图 → z_q, z_e
-            z_q, z_e, _, vq_loss, commit_loss, entropy_loss = model_vq(raw_map)  # z_q/z_e: [B, L, d_z]
+            # 1. 三路 VQ 编码器各自编码对应切片 → 拼接 z
+            z_q1, z_e1, _, vq_loss1, commit_loss1, entropy_loss1 = enc1(s1)
+            z_q2, z_e2, _, vq_loss2, commit_loss2, entropy_loss2 = enc2(s2)
+            z_q3, z_e3, _, vq_loss3, commit_loss3, entropy_loss3 = enc3(s3)
+            z_q  = torch.cat([z_q1, z_q2, z_q3], dim=1)   # [B, L1+L2+L3, d_z]
+            z_e  = torch.cat([z_e1, z_e2, z_e3], dim=1)   # [B, L1+L2+L3, d_z]
+            vq_loss      = vq_loss1      + vq_loss2      + vq_loss3
+            commit_loss  = commit_loss1  + commit_loss2  + commit_loss3
+            entropy_loss = entropy_loss1 + entropy_loss2 + entropy_loss3
 
             # 2. MaskGIT 以掩码地图 + z + 结构标签预测原始 tile
             struct_cond = batch["struct_cond"].to(device)  # [B, 4]
@@ -655,23 +710,25 @@ def train():
             ce_loss   = focal_loss(logits.permute(0, 2, 1), target_map)
             masked_ce = (ce_loss * mask).sum() / (mask.sum() + 1e-6)
 
-            # 4. z 一致性约束（方案 A）：将 MaskGIT 的 logits 经温度平滑后
-            #    与 VQ 编码器的 tile embedding 做加权求和，得到软嵌入序列，
-            #    再送入编码器得到 z_pred_e，约束其与真实 z_e 对齐。
-            #    梯度从 z_pred_e 回传到 MaskGIT 的 logits；
-            #    VQ 参数在此路径上临时冻结（requires_grad=False），
-            #    确保编码器权重仅由真实地图路径（vq_loss）更新，不被一致性损失带偏。
-            for p in model_vq.parameters():
-                p.requires_grad_(False)
+            # 4. z 一致性约束（方案 A 扩展到三通道）：
+            #    MaskGIT logits 经温度平滑后与各编码器的 tile embedding 做加权求和，
+            #    得到软嵌入 → 各编码器再次编码 → z_pred_e_k 与真实 z_e_k 对齐。
+            #    编码器权重在此路径上临时冻结，确保梯度仅回传至 MaskGIT。
+            for enc in [enc1, enc2, enc3]:
+                for p in enc.parameters():
+                    p.requires_grad_(False)
 
-            soft_probs = F.softmax(logits / CONSIST_TEMP, dim=-1)            # [B, H*W, V]
-            tile_emb   = model_vq.tile_embedding.weight                      # [V, d_model]
-            soft_emb   = soft_probs @ tile_emb                               # [B, H*W, d_model]
-            z_pred_e   = model_vq.encode_soft(soft_emb)                      # [B, L, d_z]
+            soft_probs = F.softmax(logits / CONSIST_TEMP, dim=-1)   # [B, H*W, V]
+            z_pred_e1  = enc1.encode_soft(soft_probs @ enc1.tile_embedding.weight)
+            z_pred_e2  = enc2.encode_soft(soft_probs @ enc2.tile_embedding.weight)
+            z_pred_e3  = enc3.encode_soft(soft_probs @ enc3.tile_embedding.weight)
+            z_pred_e   = torch.cat([z_pred_e1, z_pred_e2, z_pred_e3], dim=1)
             consist_loss = F.mse_loss(z_pred_e, z_e.detach())
-
-            for p in model_vq.parameters():
-                p.requires_grad_(True)
+            
+            if not args.freeze_vq:
+                for enc in [enc1, enc2, enc3]:
+                    for p in enc.parameters():
+                        p.requires_grad_(True)
 
             # 5. 联合损失
             loss = masked_ce + vq_loss + CONSIST_LAMBDA * consist_loss
@@ -709,26 +766,31 @@ def train():
             ckpt_path = f"result/joint/joint-{epoch + 1}.pth"
             torch.save({
                 "epoch":      epoch + 1,
-                "vq_state":   model_vq.state_dict(),
+                "enc1":       enc1.state_dict(),
+                "enc2":       enc2.state_dict(),
+                "enc3":       enc3.state_dict(),
                 "mg_state":   model_mg.state_dict(),
                 "optim_state":optimizer.state_dict(),
             }, ckpt_path)
             tqdm.write(f"  检查点已保存: {ckpt_path}")
 
             val_loss = validate(
-                model_vq, model_mg, dataloader_val, tile_dict, epoch + 1
+                enc1, enc2, enc3, model_mg, dataloader_val, tile_dict, epoch + 1
             )
             tqdm.write(
                 f"[Validate] Epoch {epoch + 1:4d} | Val Loss {val_loss:.5f}"
             )
             # 恢复训练模式
-            model_vq.train()
+            for enc in [enc1, enc2, enc3]:
+                enc.train()
             model_mg.train()
 
     print("训练结束。")
     torch.save({
         "epoch":    start_epoch + args.epochs,
-        "vq_state": model_vq.state_dict(),
+        "enc1":     enc1.state_dict(),
+        "enc2":     enc2.state_dict(),
+        "enc3":     enc3.state_dict(),
         "mg_state": model_mg.state_dict(),
     }, "result/joint/joint_final.pth")
 

@@ -459,12 +459,88 @@ class GinkaVQDataset(Dataset):
 
         struct_cond = torch.LongTensor([cond_sym, cond_room, cond_branch, cond_outer])
 
+        raw_t = torch.LongTensor(raw_flat)
         return {
-            "raw_map":     torch.LongTensor(raw_flat),         # VQ-VAE 编码器输入
+            "raw_map":     raw_t,                              # VQ-VAE 编码器输入
+            "slice1":      make_slice(raw_t, {0, 1}),          # 通道 1：floor+wall
+            "slice2":      make_slice(raw_t, {0, 1, 2, 9, 10}),# 通道 2：floor+wall+门+怪+入口
+            "slice3":      raw_t.clone(),                      # 通道 3：完整地图
             "masked_map":  torch.LongTensor(masked_np),        # MaskGIT 输入
             "target_map":  torch.LongTensor(raw_flat.copy()),  # CE loss ground truth
             "subset":      subset,                             # 调试/统计用
             "struct_cond": struct_cond,                        # [4]，供模型 Embedding 查表
+        }
+
+
+# ---------------------------------------------------------------------------
+# make_slice：按保留集合切割地图，其余位置替换为 floor(0)
+# ---------------------------------------------------------------------------
+
+def make_slice(map_flat: torch.Tensor, keep_set: set) -> torch.Tensor:
+    """
+    从完整地图中只保留 keep_set 中的 tile 类型，其余位置替换为 floor(0)。
+
+    Args:
+        map_flat: LongTensor [H*W]  完整地图 tile ID 序列
+        keep_set: set of int        需要保留的 tile 类型集合
+
+    Returns:
+        LongTensor [H*W]  切片后的地图（非保留 tile 位置值为 0）
+    """
+    out = map_flat.clone()
+    mask = torch.zeros_like(out, dtype=torch.bool)
+    for t in keep_set:
+        mask |= (out == t)
+    out[~mask] = 0
+    return out
+
+
+# ---------------------------------------------------------------------------
+# GinkaSplitDataset：三通道分拆预训练专用数据集
+# ---------------------------------------------------------------------------
+
+class GinkaSplitDataset(Dataset):
+    """
+    三通道分拆预训练（方案 B）专用数据集。
+
+    每个样本只提供完整地图及其三路切片，不做 MaskGIT 掩码处理。
+    切片按累积式设计：
+      slice1 = floor(0) + wall(1)
+      slice2 = floor(0) + wall(1) + door(2) + mob(9) + entrance(10)
+      slice3 = 完整地图（所有 tile）
+
+    返回 dict:
+      raw_map: LongTensor [H*W]  完整原始地图
+      slice1:  LongTensor [H*W]  通道 1 切片（floor+wall）
+      slice2:  LongTensor [H*W]  通道 2 切片（floor+wall+门+怪+入口）
+      slice3:  LongTensor [H*W]  通道 3 切片（完整地图）
+    """
+
+    def __init__(self, data_path: str):
+        self.data = load_data(data_path)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        arr = np.array(item['map'], dtype=np.int64)  # [H, W]
+
+        # 随机旋转 / 翻转数据增强
+        if np.random.rand() > 0.5:
+            k = np.random.randint(1, 4)
+            arr = np.rot90(arr, k).copy()
+        if np.random.rand() > 0.5:
+            arr = np.fliplr(arr).copy()
+        if np.random.rand() > 0.5:
+            arr = np.flipud(arr).copy()
+
+        raw = torch.LongTensor(arr.reshape(-1))   # [H*W]
+        return {
+            "raw_map": raw,
+            "slice1":  make_slice(raw, {0, 1}),
+            "slice2":  make_slice(raw, {0, 1, 2, 9, 10}),
+            "slice3":  raw.clone(),
         }
 
 
