@@ -50,6 +50,9 @@ VQ_DIM_FF = 512
 VQ_BETA   = 0.5
 VQ_GAMMA  = 0.0
 
+# Focal Loss
+FOCAL_GAMMA = 2.0   # focal loss 聚焦参数（越大越关注难例/稀有类别）
+
 # 解码头超参（与编码器对称：同等层数和 FFN 宽度）
 DH_NHEAD   = 8    # Cross-Attention 头数（VQ_D_Z=128 可被 8 整除）
 DH_DIM_FF  = 512  # FFN 隐层维度（与编码器 VQ_DIM_FF 一致）
@@ -67,6 +70,24 @@ device = torch.device(
 os.makedirs("result/pretrain", exist_ok=True)
 
 disable_tqdm = not sys.stdout.isatty()
+
+# ---------------------------------------------------------------------------
+# Focal Loss
+# ---------------------------------------------------------------------------
+def focal_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    gamma: float = FOCAL_GAMMA,
+) -> torch.Tensor:
+    """
+    多分类 Focal Loss（mean 归约）：FL = -(1 - p_t)^gamma * log(p_t)
+
+    相比 CE，对已被正确分类的高置信度样本施加更小的权重，
+    迫使模型关注难分类的稀有 tile（门/怪/资源等）。
+    """
+    ce = F.cross_entropy(logits, targets, reduction='none')
+    pt = torch.exp(-ce)
+    return ((1.0 - pt) ** gamma * ce).mean()
 
 # ---------------------------------------------------------------------------
 # 简单数据集：仅返回 raw_map，无子集划分，无掩码
@@ -246,11 +267,9 @@ def train():
             # 1. 编码
             z_q, _, _, vq_loss, commit_loss, entropy_loss = model_vq(raw_map)
 
-            # 2. 解码→全图重建
+            # 2. 解码→全图重建（focal loss 缓解墙壁/空地主导问题）
             logits = decode_head(z_q)                     # [B, H*W, C]
-            ce_loss = F.cross_entropy(
-                logits.permute(0, 2, 1), raw_map          # [B, C, H*W] vs [B, H*W]
-            )
+            ce_loss = focal_loss(logits.permute(0, 2, 1), raw_map)
 
             # 3. 总损失（重建 + VQ 正则）
             loss = ce_loss + vq_loss

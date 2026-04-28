@@ -42,7 +42,7 @@ MASK_TOKEN       = 15
 GENERATE_STEP    = 18    # 推理时 MaskGIT 迭代步数
 MAP_SIZE         = 13 * 13
 MAP_H = MAP_W    = 13
-LABEL_SMOOTHING  = 0.0
+FOCAL_GAMMA      = 2.0   # focal loss 聚焦参数（越大越关注难例/稀有类别）
 WALL_MASK_RATIO  = 0.8
 
 # VQ-VAE 超参
@@ -106,6 +106,36 @@ def parse_arguments():
                         help="（方案 D 阶段 1）冻结 VQ 编码器，仅训练 MaskGIT。"
                              "适用于预训练权重加载后的热身阶段。")
     return parser.parse_args()
+
+# ---------------------------------------------------------------------------
+# Focal Loss
+# ---------------------------------------------------------------------------
+def focal_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    gamma: float = FOCAL_GAMMA,
+    reduction: str = 'none',
+) -> torch.Tensor:
+    """
+    多分类 Focal Loss：FL = -(1 - p_t)^gamma * log(p_t)
+
+    相比 CE，对已被正确分类的高置信度样本施加更小的权重，
+    迫使模型关注难分类的稀有 tile（门/怪/资源等）。
+
+    Args:
+        logits:    [B, C, *]  未经 softmax 的原始预测
+        targets:   [B, *]     整数类别标签
+        gamma:     聚焦参数，0 时退化为标准 CE
+        reduction: 'none' | 'mean' | 'sum'
+    """
+    ce = F.cross_entropy(logits, targets, reduction='none')   # [B, *]
+    pt = torch.exp(-ce)                                        # 正确类的预测概率
+    fl = (1.0 - pt) ** gamma * ce
+    if reduction == 'mean':
+        return fl.mean()
+    if reduction == 'sum':
+        return fl.sum()
+    return fl   # 'none'
 
 # ---------------------------------------------------------------------------
 # MaskGIT 推理（cosine schedule 迭代解码）
@@ -367,10 +397,7 @@ def validate(
         logits = model_mg(masked_map, z_q, struct_cond=struct_cond_b)
         mask   = (masked_map == MASK_TOKEN)
 
-        ce_loss   = F.cross_entropy(
-            logits.permute(0, 2, 1), target_map,
-            reduction='none', label_smoothing=LABEL_SMOOTHING
-        )
+        ce_loss   = focal_loss(logits.permute(0, 2, 1), target_map)
         masked_ce = (ce_loss * mask).sum() / (mask.sum() + 1e-6)
         val_loss_total += (masked_ce + vq_loss).item()
         val_steps      += 1
@@ -623,12 +650,9 @@ def train():
             struct_cond = batch["struct_cond"].to(device)  # [B, 4]
             logits = model_mg(masked_map, z_q, struct_cond=struct_cond)  # [B, 169, C]
 
-            # 3. 只对被 mask 的位置计算 CE loss
+            # 3. 只对被 mask 的位置计算 focal loss（缓解墙壁/空地主导问题）
             mask   = (masked_map == MASK_TOKEN)           # [B, 169] bool
-            ce_loss = F.cross_entropy(
-                logits.permute(0, 2, 1), target_map,
-                reduction='none', label_smoothing=LABEL_SMOOTHING
-            )
+            ce_loss   = focal_loss(logits.permute(0, 2, 1), target_map)
             masked_ce = (ce_loss * mask).sum() / (mask.sum() + 1e-6)
 
             # 4. z 一致性约束（方案 A）：将 MaskGIT 的 logits 经温度平滑后
