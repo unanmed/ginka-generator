@@ -2,6 +2,7 @@
 联合训练脚本：VQ-VAE + MaskGIT
 
 总损失 = L_CE（MaskGIT 重建损失）+ beta * L_commit + gamma * L_entropy
+       + lambda * L_consist（z 一致性约束，方案 A）
 
 验证阶段对四种子集（A/B/C/D）分别输出图片，
 每条样本额外采样 N_Z_SAMPLES 个随机 z，
@@ -62,6 +63,10 @@ MG_LAYERS   = 4
 MG_DIM_FF   = 1024
 MG_Z_DROPOUT     = 0.1  # 训练时以此概率把 z 替换为随机噪声
 MG_STRUCT_DROPOUT= 0.1  # 训练时以此概率将结构标签替换为 null（无条件占位）
+
+# 一致性约束超参（方案 A）
+CONSIST_LAMBDA = 0.1   # z 一致性损失权重
+CONSIST_TEMP   = 2.0   # 计算软嵌入时对 logits 施加的温度（>1 平滑分布，降低 gap）
 
 # 验证时对每条样本额外采样的 z 数量（0 = 只用真实 z）
 N_Z_SAMPLES = 3
@@ -354,7 +359,7 @@ def validate(
         subsets    = batch["subset"]                  # list of str
         B          = raw_map.shape[0]
 
-        z_q, _, vq_loss, _, _ = model_vq(raw_map)
+        z_q, _, _, vq_loss, _, _ = model_vq(raw_map)
         struct_cond_b = batch["struct_cond"].to(device)  # [B, 4]
         logits = model_mg(masked_map, z_q, struct_cond=struct_cond_b)
         mask   = (masked_map == MASK_TOKEN)
@@ -589,6 +594,7 @@ def train():
         vq_loss_total   = 0.0
         commit_total    = 0.0
         entropy_total   = 0.0
+        consist_total   = 0.0
         subset_stats    = {'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
         for batch in tqdm(dataloader_train, leave=False,
@@ -601,8 +607,8 @@ def train():
                 subset_stats[s] = subset_stats.get(s, 0) + 1
 
             # ---- 前向传播 ----
-            # 1. VQ-VAE 编码真实地图 → z_q
-            z_q, _, vq_loss, commit_loss, entropy_loss = model_vq(raw_map)  # z_q: [B, L, d_z]
+            # 1. VQ-VAE 编码真实地图 → z_q, z_e
+            z_q, z_e, _, vq_loss, commit_loss, entropy_loss = model_vq(raw_map)  # z_q/z_e: [B, L, d_z]
 
             # 2. MaskGIT 以掩码地图 + z + 结构标签预测原始 tile
             struct_cond = batch["struct_cond"].to(device)  # [B, 4]
@@ -616,8 +622,19 @@ def train():
             )
             masked_ce = (ce_loss * mask).sum() / (mask.sum() + 1e-6)
 
-            # 4. 联合损失
-            loss = masked_ce + vq_loss
+            # 4. z 一致性约束（方案 A）：将 MaskGIT 的 logits 经温度平滑后
+            #    与 VQ 编码器的 tile embedding 做加权求和，得到软嵌入序列，
+            #    再送入编码器得到 z_pred_e，约束其与真实 z_e 对齐。
+            #    梯度从 z_pred_e 回传到 MaskGIT 的 logits（以及 VQ encoder 的权重）；
+            #    z_e 作为 detach 后的监督目标，不产生梯度。
+            soft_probs = F.softmax(logits / CONSIST_TEMP, dim=-1)            # [B, H*W, V]
+            tile_emb   = model_vq.tile_embedding.weight                      # [V, d_model]
+            soft_emb   = soft_probs @ tile_emb                               # [B, H*W, d_model]
+            z_pred_e   = model_vq.encode_soft(soft_emb)                      # [B, L, d_z]
+            consist_loss = F.mse_loss(z_pred_e, z_e.detach())
+
+            # 5. 联合损失
+            loss = masked_ce + vq_loss + CONSIST_LAMBDA * consist_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -629,6 +646,7 @@ def train():
             vq_loss_total += vq_loss.detach().item()
             commit_total  += commit_loss.detach().item()
             entropy_total += entropy_loss.detach().item()
+            consist_total += consist_loss.detach().item()
 
         scheduler.step()
 
@@ -640,7 +658,8 @@ def train():
             f"CE {ce_total/n:.5f}  "
             f"VQ {vq_loss_total/n:.5f}  "
             f"Commit {commit_total/n:.5f}  "
-            f"Entropy {entropy_total/n:.5f} | "
+            f"Entropy {entropy_total/n:.5f}  "
+            f"Consist {consist_total/n:.5f} | "
             f"LR {scheduler.get_last_lr()[0]:.6f} | "
             f"Subsets {subset_stats}"
         )

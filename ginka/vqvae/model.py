@@ -115,7 +115,32 @@ class GinkaVQVAE(nn.Module):
         z_e = self.proj(x[:, :self.L])                     # [B, L, d_z]
         return z_e
 
-    def forward(self, map: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def encode_soft(self, soft_emb: torch.Tensor) -> torch.Tensor:
+        """
+        将软嵌入序列编码为量化前的连续向量序列（用于一致性约束）。
+
+        与 encode() 的区别：输入是已经过 softmax 加权求和得到的连续嵌入矩阵
+        [B, H*W, d_model]，而非整数 tile ID。梯度可完整回传到调用方的 logits。
+
+        Args:
+            soft_emb: [B, H*W, d_model]  softmax 加权 tile 嵌入（已在 d_model 空间）
+
+        Returns:
+            z_e: [B, L, d_z]  量化前的编码向量
+        """
+        B = soft_emb.shape[0]
+
+        x = soft_emb + self.pos_embedding                   # [B, H*W, d_model]
+
+        summary = self.summary_tokens.expand(B, -1, -1)    # [B, L, d_model]
+        x = torch.cat([summary, x], dim=1)                 # [B, L+H*W, d_model]
+
+        x = self.transformer(x)                            # [B, L+H*W, d_model]
+
+        z_e = self.proj(x[:, :self.L])                     # [B, L, d_z]
+        return z_e
+
+    def forward(self, map: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         完整前向传播：编码 → 量化 → 计算损失。
 
@@ -123,15 +148,18 @@ class GinkaVQVAE(nn.Module):
             map: [B, H*W]  整数 tile ID（训练时传入完整真实地图）
 
         Returns:
-            z_q:   [B, L, d_z]  量化后的 z（含直通梯度），供 MaskGIT 使用
-            indices: [B, L]     每个位置对应的码字索引
-            vq_loss: scalar     VQ 总损失 = beta * commit_loss + gamma * entropy_loss
+            z_q:          [B, L, d_z]  量化后的 z（含直通梯度），供 MaskGIT 使用
+            z_e:          [B, L, d_z]  量化前的连续编码向量，供一致性约束使用
+            indices:      [B, L]       每个位置对应的码字索引
+            vq_loss:      scalar       VQ 总损失 = beta * commit_loss + gamma * entropy_loss
+            commit_loss:  scalar
+            entropy_loss: scalar
         """
         z_e = self.encode(map)
         z_q, indices, commit_loss, entropy_loss = self.vq(z_e)
 
         vq_loss = self.beta * commit_loss + self.gamma * entropy_loss
-        return z_q, indices, vq_loss, commit_loss, entropy_loss
+        return z_q, z_e, indices, vq_loss, commit_loss, entropy_loss
 
     def sample(self, B: int, device: torch.device) -> torch.Tensor:
         """
@@ -175,9 +203,10 @@ if __name__ == "__main__":
     # 前向传播测试
     map_input = torch.randint(0, 15, (4, 13 * 13)).to(device)  # [B=4, 169]
 
-    z_q, indices, vq_loss = model(map_input)
+    z_q, z_e, indices, vq_loss, commit_loss, entropy_loss = model(map_input)
 
     print(f"\nz_q shape:    {z_q.shape}")      # [4, 2, 64]
+    print(f"z_e shape:    {z_e.shape}")        # [4, 2, 64]
     print(f"indices shape:{indices.shape}")    # [4, 2]
     print(f"vq_loss:      {vq_loss.item():.4f}")
 
