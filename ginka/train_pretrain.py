@@ -50,8 +50,10 @@ VQ_DIM_FF = 512
 VQ_BETA   = 0.5
 VQ_GAMMA  = 0.0
 
-# 解码头超参
-DH_NHEAD  = 8    # Cross-Attention 头数（VQ_D_Z=128 可被 8 整除）
+# 解码头超参（与编码器对称：同等层数和 FFN 宽度）
+DH_NHEAD   = 8    # Cross-Attention 头数（VQ_D_Z=128 可被 8 整除）
+DH_DIM_FF  = 512  # FFN 隐层维度（与编码器 VQ_DIM_FF 一致）
+DH_LAYERS  = 4    # 解码层数（与编码器 VQ_LAYERS 一致）
 
 # ---------------------------------------------------------------------------
 # 设备
@@ -185,6 +187,8 @@ def train():
         d_z=VQ_D_Z,
         map_size=MAP_SIZE,
         nhead=DH_NHEAD,
+        dim_ff=DH_DIM_FF,
+        num_layers=DH_LAYERS,
     ).to(device)
 
     vq_params = sum(p.numel() for p in model_vq.parameters())
