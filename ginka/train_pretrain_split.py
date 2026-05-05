@@ -41,35 +41,35 @@ FOCAL_GAMMA  = 2.0
 
 # 通道 1：空间骨架（floor+wall）
 CH1_KEEP     = {0, 1}          # 编码器输入保留的 tile
-CH1_LOSS     = {1}             # 损失计算范围（仅 wall）
+CH1_LOSS     = {0, 1}             # 损失计算范围（仅 wall）
 CH1_D_MODEL  = 128
-CH1_NHEAD    = 4
+CH1_NHEAD    = 8
 
 # 通道 2：关卡门控
 CH2_KEEP     = {0, 1, 2, 9, 10}
 CH2_LOSS     = {2, 9, 10}
-CH2_D_MODEL  = 64
-CH2_NHEAD    = 4
+CH2_D_MODEL  = 128
+CH2_NHEAD    = 8
 
 # 通道 3：收集资源
 CH3_KEEP     = None            # 完整地图，无需切片
 CH3_LOSS     = {3, 4, 5, 6, 7, 8}
-CH3_D_MODEL  = 64
-CH3_NHEAD    = 4
+CH3_D_MODEL  = 128
+CH3_NHEAD    = 8
 
 # 三路共用的 VQ 超参
 VQ_L      = 2
-VQ_K      = 16
-VQ_D_Z    = 64
-VQ_LAYERS = 2
-VQ_DIM_FF = 256
-VQ_BETA   = 0.25   # commit loss 权重
-VQ_GAMMA  = 0.1    # entropy loss 权重
+VQ_K      = 8
+VQ_D_Z    = 128
+VQ_LAYERS = 3
+VQ_DIM_FF = 512
+VQ_BETA   = 0.5   # commit loss 权重
+VQ_GAMMA  = 0.0    # entropy loss 权重
 
 # 解码头超参（三路共用相同规格）
-DH_NHEAD   = 4
-DH_DIM_FF  = 256
-DH_LAYERS  = 2
+DH_NHEAD   = 8
+DH_DIM_FF  = 512
+DH_LAYERS  = 3
 
 # ---------------------------------------------------------------------------
 # 设备
@@ -258,6 +258,12 @@ def train():
         sum(p.numel() for p in enc3.parameters())
     )
     print(f"编码器总参数量（三路）: {total_params:,}  ({total_params / 1e6:.3f}M)")
+    total_params = (
+        sum(p.numel() for p in head1.parameters()) +
+        sum(p.numel() for p in head2.parameters()) +
+        sum(p.numel() for p in head3.parameters())
+    )
+    print(f"解码器总参数量（三路）: {total_params:,}  ({total_params / 1e6:.3f}M)")
 
     # ---- 训练循环 ----
     for epoch in range(start_epoch, args.epochs):

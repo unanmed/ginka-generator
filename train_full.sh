@@ -24,7 +24,7 @@ TRAIN_DATA="ginka-dataset.json"
 EVAL_DATA="ginka-eval.json"
 
 # 阶段 0：三通道分拆预训练
-P0_EPOCHS=100
+P0_EPOCHS=30
 P0_CHECKPOINT=10
 P0_FINAL="result/pretrain_split/split_final.pth"
 
