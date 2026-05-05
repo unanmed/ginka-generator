@@ -62,7 +62,7 @@ VQ_DIM_FF = 256
 # 通道专属损失计算范围（用于监控验证召回率）
 CH1_LOSS = {1}
 CH2_LOSS = {2, 9, 10}
-CH3_LOSS = {3, 4, 5, 6, 7, 8}
+CH3_LOSS = {3}  # 资源已压缩为单一 tile=3
 
 # MaskGIT 超参
 MG_D_MODEL  = 256

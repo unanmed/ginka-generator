@@ -61,11 +61,17 @@ class GinkaMaskGIT(nn.Module):
             nn.LayerNorm(d_model),
         )
 
-        # 结构标签嵌入（编码到 d_z 维度，与 z 拼接后统一投影到 d_model）
+        # 结构标签嵌入（编码到 d_z 维度）
+        # 注意：结构标签与 VQ 码字语义不同，使用独立投影层避免混用
         self.sym_embed    = nn.Embedding(SYM_VOCAB,    d_z)
         self.room_embed   = nn.Embedding(ROOM_VOCAB,   d_z)
         self.branch_embed = nn.Embedding(BRANCH_VOCAB, d_z)
         self.outer_embed  = nn.Embedding(OUTER_VOCAB,  d_z)
+
+        self.struct_proj  = nn.Sequential(
+            nn.Linear(d_z, d_model),
+            nn.LayerNorm(d_model),
+        )
 
         # Transformer：encoder 做 map token 自注意力，decoder 做与 z 的 cross-attention
         self.transformer = Transformer(
@@ -131,10 +137,11 @@ class GinkaMaskGIT(nn.Module):
         e_outer  = self.outer_embed(outer_idx).unsqueeze(1)   # [B, 1, d_z]
 
         struct_seq = torch.cat([e_sym, e_room, e_branch, e_outer], dim=1)  # [B, 4, d_z]
-        z_ext = torch.cat([z, struct_seq], dim=1)              # [B, L+4, d_z]
 
-        # 统一投影到 d_model 维度
-        z_mem = self.z_proj(z_ext)          # [B, L+4, d_model]
+        # VQ 码字与结构标签语义不同，使用各自独立的投影层后再拼接
+        z_mem_vq     = self.z_proj(z)               # [B, L,   d_model]
+        z_mem_struct = self.struct_proj(struct_seq)  # [B, 4,   d_model]
+        z_mem = torch.cat([z_mem_vq, z_mem_struct], dim=1)  # [B, L+4, d_model]
 
         # tile embedding + 位置编码
         x = self.tile_embedding(map)        # [B, H*W, d_model]

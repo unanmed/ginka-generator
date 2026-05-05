@@ -15,6 +15,14 @@ def load_data(path: str):
         
     return data_list
 
+# 资源类别压缩：将所有资源 tile（钥匙/红宝石/蓝宝石/绿宝石/血瓶/道具）统一映射为 3
+# 其余 tile 保持原始编号（enemy=9, entry=10, mask=15）
+_RESOURCE_REMAP = np.array([0, 1, 2, 3, 3, 3, 3, 3, 3, 9, 10, 11, 12, 13, 14, 15], dtype=np.int64)
+
+def remap_resources(arr: np.ndarray) -> np.ndarray:
+    """将地图 numpy 数组中的资源 tile (3~8) 统一压缩为 3。"""
+    return _RESOURCE_REMAP[arr]
+
 class GinkaMaskGITDataset(Dataset):
     def __init__(
         self, data_path: str, sigma_rand=0.1, blur_min=3, blur_max=6, 
@@ -444,6 +452,7 @@ class GinkaVQDataset(Dataset):
         item = self.data[idx]
 
         raw_np = self._augment(np.array(item['map'], dtype=np.int64))  # [H, W]
+        raw_np = remap_resources(raw_np)                               # 资源压缩
         subset = self._choose_subset()
         masked_np = self._apply_subset(raw_np, subset)                 # [H*W]
         raw_flat  = raw_np.reshape(-1)                                 # [H*W]
@@ -525,6 +534,7 @@ class GinkaSplitDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         arr = np.array(item['map'], dtype=np.int64)  # [H, W]
+        arr = remap_resources(arr)                   # 资源压缩
 
         # 随机旋转 / 翻转数据增强
         if np.random.rand() > 0.5:
