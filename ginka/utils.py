@@ -75,9 +75,9 @@ def masked_focal(
     # count[0]，导致 weight[0] 趋近于 0、非专属位置损失被消除的问题
     class_weight = None
     if balance:
-        flat   = target.view(-1)                                # [B*S] 原始标签
+        flat   = corrected.view(-1)                                # [B*S] 原始标签
         counts = torch.bincount(flat, minlength=C).float()     # [C]
-        class_weight = flat.numel() / (counts.clamp(min=1.0) * C)
+        class_weight = torch.sqrt(flat.numel() / (counts.clamp(min=1.0) * C))
         class_weight[counts == 0] = 0.0                        # 未出现类别不参与
 
     ce = F.cross_entropy(
