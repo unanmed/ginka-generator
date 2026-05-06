@@ -65,6 +65,9 @@ class VQDecodeHead(nn.Module):
         # 每个格子一个可学习位置查询
         self.pos_queries = nn.Parameter(torch.randn(1, map_size, d_z) * 0.02)
 
+        # 条件地图嵌入：将切片地图 tile ID 映射到 d_z 空间，叠加到位置查询
+        self.cond_embedding = nn.Embedding(num_classes, d_z)
+
         # 堆叠多层解码块
         self.layers = nn.ModuleList([
             _DecodeLayer(d_z, nhead, dim_ff) for _ in range(num_layers)
@@ -73,16 +76,20 @@ class VQDecodeHead(nn.Module):
         self.norm_out = nn.LayerNorm(d_z)
         self.classifier = nn.Linear(d_z, num_classes)
 
-    def forward(self, z_q: torch.Tensor) -> torch.Tensor:
+    def forward(self, z_q: torch.Tensor, cond_map: torch.Tensor | None = None) -> torch.Tensor:
         """
         Args:
-            z_q: [B, L, d_z]
+            z_q:      [B, L, d_z]    量化后的 z 向量
+            cond_map: [B, map_size]  条件切片地图（整数 tile ID）；
+                                     为 None 时退化为纯位置查询（与旧行为一致）
 
         Returns:
             logits: [B, map_size, num_classes]
         """
         B = z_q.shape[0]
         x = self.pos_queries.expand(B, -1, -1)   # [B, map_size, d_z]
+        if cond_map is not None:
+            x = x + self.cond_embedding(cond_map) # 叠加切片上下文
         for layer in self.layers:
             x = layer(x, z_q)
         x = self.norm_out(x)

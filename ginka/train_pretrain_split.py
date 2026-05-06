@@ -145,7 +145,7 @@ def validate(
 
         # 通道 1
         z_q1, _, idx1, _, _, _ = enc1(s1)
-        logits1 = head1(z_q1)
+        logits1 = head1(z_q1, torch.zeros_like(raw_map))
         pred1   = logits1.argmax(dim=-1)        # [B, H*W]
         wall_m  = (raw_map == 1)
         ch1_tp += (pred1[wall_m] == 1).sum().item()
@@ -155,7 +155,7 @@ def validate(
 
         # 通道 2
         z_q2, _, idx2, _, _, _ = enc2(s2)
-        logits2 = head2(z_q2)
+        logits2 = head2(z_q2, s1)
         pred2   = logits2.argmax(dim=-1)
         for t in CH2_LOSS:
             m = (raw_map == t)
@@ -166,7 +166,7 @@ def validate(
 
         # 通道 3
         z_q3, _, idx3, _, _, _ = enc3(s3)
-        logits3 = head3(z_q3)
+        logits3 = head3(z_q3, s2)
         pred3   = logits3.argmax(dim=-1)
         for t in CH3_LOSS:
             m = (raw_map == t)
@@ -294,19 +294,19 @@ def train():
 
             # ─── 通道 1 ───
             z_q1, _, _, vq_loss1, commit_loss1, entropy_loss1 = enc1(s1)
-            logits1 = head1(z_q1)                             # [B, H*W, C]
+            logits1 = head1(z_q1, torch.zeros_like(raw_map))                         # [B, H*W, C]
             fl1     = masked_focal(logits1, raw_map, CH1_LOSS, gamma=FOCAL_GAMMA)
             loss1   = fl1 + VQ_BETA * commit_loss1 + VQ_GAMMA * entropy_loss1
 
             # ─── 通道 2 ───
             z_q2, _, _, vq_loss2, commit_loss2, entropy_loss2 = enc2(s2)
-            logits2 = head2(z_q2)
+            logits2 = head2(z_q2, s1)
             fl2     = masked_focal(logits2, raw_map, CH2_LOSS, gamma=FOCAL_GAMMA)
             loss2   = fl2 + VQ_BETA * commit_loss2 + VQ_GAMMA * entropy_loss2
 
             # ─── 通道 3 ───
             z_q3, _, _, vq_loss3, commit_loss3, entropy_loss3 = enc3(s3)
-            logits3 = head3(z_q3)
+            logits3 = head3(z_q3, s2)
             fl3     = masked_focal(logits3, raw_map, CH3_LOSS, gamma=FOCAL_GAMMA)
             loss3   = fl3 + VQ_BETA * commit_loss3 + VQ_GAMMA * entropy_loss3
 
