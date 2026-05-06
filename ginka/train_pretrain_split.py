@@ -42,25 +42,25 @@ FOCAL_GAMMA  = 2.0
 # 通道 1：空间骨架（floor+wall）
 CH1_KEEP     = {0, 1}          # 编码器输入保留的 tile
 CH1_LOSS     = {0, 1}             # 损失计算范围（仅 wall）
-CH1_D_MODEL  = 128
+CH1_D_MODEL  = 64
 CH1_NHEAD    = 8
 
 # 通道 2：关卡门控
 CH2_KEEP     = {0, 1, 2, 9, 10}
-CH2_LOSS     = {2, 9, 10}
-CH2_D_MODEL  = 128
+CH2_LOSS     = {0, 1, 2, 9, 10}
+CH2_D_MODEL  = 64
 CH2_NHEAD    = 8
 
 # 通道 3：收集资源
 CH3_KEEP     = None            # 完整地图，无需切片
-CH3_LOSS     = {3, 4, 5, 6, 7, 8}
-CH3_D_MODEL  = 128
+CH3_LOSS     = {0, 1, 2, 3, 9, 10}
+CH3_D_MODEL  = 64
 CH3_NHEAD    = 8
 
 # 三路共用的 VQ 超参
 VQ_L      = 2
 VQ_K      = 8
-VQ_D_Z    = 128
+VQ_D_Z    = 64
 VQ_LAYERS = 3
 VQ_DIM_FF = 512
 VQ_BETA   = 0.5   # commit loss 权重

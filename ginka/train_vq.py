@@ -48,14 +48,14 @@ WALL_MASK_RATIO  = 0.8
 # VQ-VAE 公共超参（三路编码器共用，方案 B 三通道分拆）
 VQ_L      = 2    # 每路码字序列长度（三路合计 L1+L2+L3 = 6）
 VQ_K      = 8   # codebook 大小
-VQ_D_Z    = 128   # codebook 嵌入维度（三路保持一致，便于拼接）
+VQ_D_Z    = 64   # codebook 嵌入维度（三路保持一致，便于拼接）
 VQ_BETA   = 0.5  # commit loss 权重
 VQ_GAMMA  = 0.0   # entropy loss 权重
 
 # 各通道编码器配置
-CH1_D_MODEL = 128; CH1_NHEAD = 8   # 通道 1：空间骨架（floor+wall）
-CH2_D_MODEL = 128; CH2_NHEAD = 8   # 通道 2：关卡门控
-CH3_D_MODEL = 128; CH3_NHEAD = 8   # 通道 3：收集资源
+CH1_D_MODEL = 64; CH1_NHEAD = 8   # 通道 1：空间骨架（floor+wall）
+CH2_D_MODEL = 64; CH2_NHEAD = 8   # 通道 2：关卡门控
+CH3_D_MODEL = 64; CH3_NHEAD = 8   # 通道 3：收集资源
 VQ_LAYERS = 3
 VQ_DIM_FF = 512
 

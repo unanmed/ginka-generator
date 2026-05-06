@@ -24,13 +24,13 @@ TRAIN_DATA="ginka-dataset.json"
 EVAL_DATA="ginka-eval.json"
 
 # 阶段 0：三通道分拆预训练
-P0_EPOCHS=30
-P0_CHECKPOINT=10
+P0_EPOCHS=10
+P0_CHECKPOINT=5
 P0_FINAL="result/pretrain_split/split_final.pth"
 
 # 阶段 1：冻结编码器热身
-P1_EPOCHS=50
-P1_CHECKPOINT=10
+P1_EPOCHS=10
+P1_CHECKPOINT=5
 P1_FINAL="result/joint/warmup_final.pth"
 
 # 阶段 2：完整联合训练
