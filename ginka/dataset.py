@@ -1,7 +1,6 @@
 import json
 import random
 import torch
-import cv2
 import numpy as np
 from torch.utils.data import Dataset
 
@@ -14,231 +13,6 @@ def load_data(path: str):
         data_list.append(value)
         
     return data_list
-
-# 资源类别压缩：将所有资源 tile（钥匙/红宝石/蓝宝石/绿宝石/血瓶/道具）统一映射为 3
-# 其余 tile 保持原始编号（enemy=9, entry=10, mask=15）
-_RESOURCE_REMAP = np.array([0, 1, 2, 3, 3, 3, 3, 3, 3, 9, 10, 11, 12, 13, 14, 15], dtype=np.int64)
-
-def remap_resources(arr: np.ndarray) -> np.ndarray:
-    """将地图 numpy 数组中的资源 tile (3~8) 统一压缩为 3。"""
-    return _RESOURCE_REMAP[arr]
-
-class GinkaMaskGITDataset(Dataset):
-    def __init__(
-        self, data_path: str, sigma_rand=0.1, blur_min=3, blur_max=6, 
-        noise_prob=0.2, drop_prob=0.2, noise_sigma=0.1
-    ):
-        self.data = load_data(data_path)
-        self.sigma_rand = sigma_rand
-        self.blur_min = blur_min
-        self.blur_max = blur_max
-        self.noise_prob = noise_prob
-        self.drop_prob = drop_prob
-        self.noise_sigma = noise_sigma
-        
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        
-        target_np = np.array(item['map'])
-        heatmap = np.array(item['heatmap'], dtype=np.float32)
-        
-        # 数据增强
-        if np.random.rand() > 0.5:
-            k = np.random.randint(0, 4)
-            target_np = np.rot90(target_np, k)
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.rot90(heatmap[i], k)
-
-        if np.random.rand() > 0.5:
-            target_np = np.fliplr(target_np)
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.fliplr(heatmap[i])
-
-        if np.random.rand() > 0.5:
-            target_np = np.flipud(target_np)
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.flipud(heatmap[i])
-        
-        target = torch.LongTensor(target_np.copy()) # [H, W]
-        cond = torch.FloatTensor(item['val']) # [cond_dim]
-        
-        if random.random() < 0.5:
-            size = random.randint(self.blur_min, self.blur_max)
-            if size % 2 == 0:
-                size = size + 1 if random.random() < 0.5 else size - 1
-            heatmap = cv2.GaussianBlur(heatmap, (size, size), 0)
-        else:
-            sizeX = random.randint(self.blur_min, self.blur_max)
-            sizeY = random.randint(self.blur_min, self.blur_max)
-            if sizeX % 2 == 0:
-                sizeX = sizeX + 1 if random.random() < 0.5 else sizeX - 1
-            if sizeY % 2 == 0:
-                sizeY = sizeY + 1 if random.random() < 0.5 else sizeY - 1
-            heatmap = cv2.GaussianBlur(heatmap, (sizeX, sizeY), 0)
-            
-        heatmap = torch.FloatTensor(heatmap) # [heatmap_channel, H, W]
-        
-        for i in range(0, heatmap.shape[0]):
-            if np.random.rand() < self.noise_prob:
-                sigma = random.random() * self.noise_sigma
-                heatmap[i] = heatmap[i] * sigma + torch.rand_like(heatmap[i]) * (1 - sigma)
-            elif np.random.rand() < self.drop_prob:
-                heatmap[i] = torch.zeros_like(heatmap[i])
-        
-        if random.random() < 0.5:
-            sigma = random.random() * self.sigma_rand
-            rand = torch.rand_like(heatmap)
-            heatmap = heatmap * (1 - sigma) + rand * sigma
-
-        return {
-            "cond": cond,
-            "target_map": target,
-            "heatmap": heatmap
-        }
-        
-class GinkaHeatmapDataset(Dataset):
-    def __init__(self, data_path: str, min_mask=0, max_mask=0.8, blur_min=3, blur_max=6):
-        self.data = load_data(data_path)
-        self.blur_min = blur_min
-        self.blur_max = blur_max
-        self.min_mask = min_mask
-        self.max_mask = max_mask
-        
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        
-        heatmap = np.array(item['heatmap'], dtype=np.float32)
-        
-        # 数据增强
-        if np.random.rand() > 0.5:
-            k = np.random.randint(0, 4)
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.rot90(heatmap[i], k)
-
-        if np.random.rand() > 0.5:
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.fliplr(heatmap[i])
-
-        if np.random.rand() > 0.5:
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.flipud(heatmap[i])
-                
-        target = heatmap.copy()
-        
-        if random.random() < 0.5:
-            size = random.randint(self.blur_min, self.blur_max)
-            if size % 2 == 0:
-                size = size + 1 if random.random() < 0.5 else size - 1
-            target = cv2.GaussianBlur(target, (size, size), 0)
-        else:
-            sizeX = random.randint(self.blur_min, self.blur_max)
-            sizeY = random.randint(self.blur_min, self.blur_max)
-            if sizeX % 2 == 0:
-                sizeX = sizeX + 1 if random.random() < 0.5 else sizeX - 1
-            if sizeY % 2 == 0:
-                sizeY = sizeY + 1 if random.random() < 0.5 else sizeY - 1
-            target = cv2.GaussianBlur(target, (sizeX, sizeY), 0)
-            
-        target = torch.FloatTensor(target) # [heatmap_channel, H, W]
-        cond = torch.FloatTensor(heatmap) # [heatmap_channel, H, W]
-        C, H, W = target.shape
-        
-        for i in range(C):
-            total = H * W
-            ratio = np.random.random() * (self.max_mask - self.min_mask) + self.min_mask
-            num = int(total * ratio)
-
-            idx = np.random.choice(total, num, replace=False)
-
-            mask = np.zeros(total, dtype=bool)
-            mask[idx] = True
-            mask = mask.reshape(H, W)
-            cond[i, mask] = 0
-
-        return {
-            "target_heatmap": heatmap,
-            "cond_heatmap": cond
-        }
-
-
-class GinkaJointDataset(Dataset):
-    def __init__(self, data_path: str, min_mask=0, max_mask=0.8, blur_min=3, blur_max=6):
-        self.data = load_data(data_path)
-        self.blur_min = blur_min
-        self.blur_max = blur_max
-        self.min_mask = min_mask
-        self.max_mask = max_mask
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = self.data[idx]
-
-        target_map = np.array(item['map'])
-        heatmap = np.array(item['heatmap'], dtype=np.float32)
-
-        if np.random.rand() > 0.5:
-            k = np.random.randint(0, 4)
-            target_map = np.rot90(target_map, k)
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.rot90(heatmap[i], k)
-
-        if np.random.rand() > 0.5:
-            target_map = np.fliplr(target_map)
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.fliplr(heatmap[i])
-
-        if np.random.rand() > 0.5:
-            target_map = np.flipud(target_map)
-            for i in range(0, heatmap.shape[0]):
-                heatmap[i] = np.flipud(heatmap[i])
-
-        target_heatmap = heatmap.copy()
-
-        if random.random() < 0.5:
-            size = random.randint(self.blur_min, self.blur_max)
-            if size % 2 == 0:
-                size = size + 1 if random.random() < 0.5 else size - 1
-            target_heatmap = cv2.GaussianBlur(target_heatmap, (size, size), 0)
-        else:
-            sizeX = random.randint(self.blur_min, self.blur_max)
-            sizeY = random.randint(self.blur_min, self.blur_max)
-            if sizeX % 2 == 0:
-                sizeX = sizeX + 1 if random.random() < 0.5 else sizeX - 1
-            if sizeY % 2 == 0:
-                sizeY = sizeY + 1 if random.random() < 0.5 else sizeY - 1
-            target_heatmap = cv2.GaussianBlur(target_heatmap, (sizeX, sizeY), 0)
-
-        target_map = torch.LongTensor(target_map.copy())
-        target_heatmap = torch.FloatTensor(target_heatmap)
-        cond_heatmap = torch.FloatTensor(heatmap.copy())
-        channels, height, width = cond_heatmap.shape
-
-        for i in range(channels):
-            total = height * width
-            ratio = np.random.random() * (self.max_mask - self.min_mask) + self.min_mask
-            num = int(total * ratio)
-
-            masked_indices = np.random.choice(total, num, replace=False)
-
-            mask = np.zeros(total, dtype=bool)
-            mask[masked_indices] = True
-            mask = mask.reshape(height, width)
-            cond_heatmap[i, mask] = 0
-
-        return {
-            "target_map": target_map,
-            "target_heatmap": target_heatmap,
-            "cond_heatmap": cond_heatmap
-        }
-
 
 def _compute_symmetry(target_np: np.ndarray) -> tuple:
     """从 numpy 地图矩阵中直接计算三种对称性，O(H*W)"""
@@ -254,21 +28,21 @@ class GinkaVQDataset(Dataset):
 
     每次 __getitem__ 按权重随机选取以下四种子集之一：
       A (standard):     标准 MaskGIT 随机掩码，随机遮盖部分 tile
-      B (wall-only):    仅保留 wall(1) + floor(0)，其余全部替换为 MASK(15)
+      B (wall-only):    仅保留 wall(1) + floor(0)，其余全部替换为 MASK(6)
       C (wall-random):  在 B 基础上，再随机 mask 部分 wall tile
-      D (wall+entry):   仅保留 wall(1) + floor(0) + entrance(10)，其余全部替换为 MASK(15)
+      D (wall+entry):   仅保留 wall(1) + floor(0) + entrance(5)，其余全部替换为 MASK(6)
 
     返回 dict:
       raw_map:    LongTensor [H*W]  完整原始地图（供 VQ-VAE 编码）
-      masked_map: LongTensor [H*W]  MaskGIT 输入（被 mask 的位置 = 15）
+      masked_map: LongTensor [H*W]  MaskGIT 输入（被 mask 的位置 = 6）
       target_map: LongTensor [H*W]  CE loss ground truth（等同 raw_map）
       subset:     str               子集标识，供调试/统计用
     """
 
     FLOOR    = 0
     WALL     = 1
-    ENTRANCE = 10
-    MASK_ID  = 15
+    ENTRANCE = 5
+    MASK_ID  = 6
 
     def __init__(
         self,
@@ -401,7 +175,7 @@ class GinkaVQDataset(Dataset):
             subset: 'A' | 'B' | 'C' | 'D'
 
         Returns:
-            [H*W] int64，被遮盖位置值为 MASK_ID(15)
+            [H*W] int64，被遮盖位置値为 MASK_ID(6)
         """
         H, W = raw.shape
 
@@ -434,7 +208,7 @@ class GinkaVQDataset(Dataset):
             return flat
 
         else:  # D
-            # 仅保留 wall(1) 和 entrance(10)，floor(0) 和其他非墙内容全部 mask
+            # 仅保留 wall(1) 和 entrance(5)，floor(0) 和其他非墙内容全部 mask
             flat = raw.reshape(-1).copy()
             keep = (flat == self.WALL) | (flat == self.ENTRANCE)
             flat[~keep] = self.MASK_ID
@@ -452,7 +226,6 @@ class GinkaVQDataset(Dataset):
         item = self.data[idx]
 
         raw_np = self._augment(np.array(item['map'], dtype=np.int64))  # [H, W]
-        raw_np = remap_resources(raw_np)                               # 资源压缩
         subset = self._choose_subset()
         masked_np = self._apply_subset(raw_np, subset)                 # [H*W]
         raw_flat  = raw_np.reshape(-1)                                 # [H*W]
@@ -472,7 +245,7 @@ class GinkaVQDataset(Dataset):
         return {
             "raw_map":     raw_t,                              # VQ-VAE 编码器输入
             "slice1":      make_slice(raw_t, {0, 1}),          # 通道 1：floor+wall
-            "slice2":      make_slice(raw_t, {0, 1, 2, 9, 10}),# 通道 2：floor+wall+门+怪+入口
+            "slice2":      make_slice(raw_t, {0, 1, 2, 4, 5}), # 通道 2：floor+wall+门+怪+入口
             "slice3":      raw_t.clone(),                      # 通道 3：完整地图
             "masked_map":  torch.LongTensor(masked_np),        # MaskGIT 输入
             "target_map":  torch.LongTensor(raw_flat.copy()),  # CE loss ground truth
@@ -515,7 +288,7 @@ class GinkaSplitDataset(Dataset):
     每个样本只提供完整地图及其三路切片，不做 MaskGIT 掩码处理。
     切片按累积式设计：
       slice1 = floor(0) + wall(1)
-      slice2 = floor(0) + wall(1) + door(2) + mob(9) + entrance(10)
+      slice2 = floor(0) + wall(1) + door(2) + mob(4) + entrance(5)
       slice3 = 完整地图（所有 tile）
 
     返回 dict:
@@ -534,7 +307,6 @@ class GinkaSplitDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         arr = np.array(item['map'], dtype=np.int64)  # [H, W]
-        arr = remap_resources(arr)                   # 资源压缩
 
         # 随机旋转 / 翻转数据增强
         if np.random.rand() > 0.5:
@@ -549,7 +321,7 @@ class GinkaSplitDataset(Dataset):
         return {
             "raw_map": raw,
             "slice1":  make_slice(raw, {0, 1}),
-            "slice2":  make_slice(raw, {0, 1, 2, 9, 10}),
+            "slice2":  make_slice(raw, {0, 1, 2, 4, 5}),
             "slice3":  raw.clone(),
         }
 
@@ -571,5 +343,5 @@ if __name__ == "__main__":
     print(f"raw_map    shape={raw.shape}, dtype={raw.dtype}")
     print(f"masked_map shape={masked.shape}, dtype={masked.dtype}")
     print(f"target_map shape={target.shape}, dtype={target.dtype}")
-    print(f"被 mask 的位置数: {(masked == 15).sum().item()} / {masked.numel()}")
+    print(f"被 mask 的位置数: {(masked == 6).sum().item()} / {masked.numel()}")
     print(f"\n200 次采样子集分布: {subset_count}")

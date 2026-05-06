@@ -37,8 +37,8 @@ from shared.image import matrix_to_image_cv
 # 超参数
 # ---------------------------------------------------------------------------
 BATCH_SIZE       = 64
-NUM_CLASSES      = 16
-MASK_TOKEN       = 15
+NUM_CLASSES      = 7
+MASK_TOKEN       = 6
 GENERATE_STEP    = 18    # 推理时 MaskGIT 迭代步数
 MAP_SIZE         = 13 * 13
 MAP_H = MAP_W    = 13
@@ -61,7 +61,7 @@ VQ_DIM_FF = 512
 
 # 通道专属损失计算范围（用于监控验证召回率）
 CH1_LOSS = {1}
-CH2_LOSS = {2, 9, 10}
+CH2_LOSS = {2, 4, 5}
 CH3_LOSS = {3}  # 资源已压缩为单一 tile=3
 
 # MaskGIT 超参

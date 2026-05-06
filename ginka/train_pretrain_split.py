@@ -35,7 +35,7 @@ from .utils import masked_focal
 # 超参数
 # ---------------------------------------------------------------------------
 BATCH_SIZE   = 64
-NUM_CLASSES  = 16
+NUM_CLASSES  = 7
 MAP_SIZE     = 13 * 13
 FOCAL_GAMMA  = 2.0
 
@@ -46,14 +46,14 @@ CH1_D_MODEL  = 64
 CH1_NHEAD    = 8
 
 # 通道 2：关卡门控
-CH2_KEEP     = {0, 1, 2, 9, 10}
-CH2_LOSS     = {0, 1, 2, 9, 10}
+CH2_KEEP     = {0, 1, 2, 4, 5}
+CH2_LOSS     = {0, 1, 2, 4, 5}
 CH2_D_MODEL  = 64
 CH2_NHEAD    = 8
 
 # 通道 3：收集资源
 CH3_KEEP     = None            # 完整地图，无需切片
-CH3_LOSS     = {0, 1, 2, 3, 9, 10}
+CH3_LOSS     = {0, 1, 2, 3, 4, 5}
 CH3_D_MODEL  = 64
 CH3_NHEAD    = 8
 
@@ -125,9 +125,9 @@ def validate(
 
     # 每类 tile 的 tp / gt 计数
     ch1_tp, ch1_gt = 0, 0                      # wall(1)
-    ch2_tp = {t: 0 for t in CH2_LOSS}          # {2,9,10}
+    ch2_tp = {t: 0 for t in CH2_LOSS}          # {2,4,5}
     ch2_gt = {t: 0 for t in CH2_LOSS}
-    ch3_tp = {t: 0 for t in CH3_LOSS}          # {3,4,5,6,7,8}
+    ch3_tp = {t: 0 for t in CH3_LOSS}          # {3,4,5}
     ch3_gt = {t: 0 for t in CH3_LOSS}
 
     # codebook 使用频次（用于熵估算）

@@ -245,13 +245,13 @@ const labelConfig: IAutoLabelConfig = {
         commonDoors: [2],
         specialDoors: [2, 2],
         keys: [3],
-        redGems: [4],
-        blueGems: [5],
-        greenGems: [6],
-        potions: [7],
-        items: [8],
-        enemies: [9],
-        entry: 10
+        redGems: [3],
+        blueGems: [3],
+        greenGems: [3],
+        potions: [3],
+        items: [3],
+        enemies: [4],
+        entry: 5
     },
     allowedSize: [[13, 13]],
     allowUselessBranch: false,
@@ -333,17 +333,17 @@ const labelConfig: IAutoLabelConfig = {
             const data: GinkaTrainData = {
                 map: floor.data.map,
                 size: [width, height],
-                heatmap: [
-                    normalizeHeatmap(info.wallHeatmap),
-                    normalizeHeatmap(info.enemyHeatmap),
-                    normalizeHeatmap(info.resourceHeatmap),
-                    normalizeHeatmap(info.potionHeatmap),
-                    normalizeHeatmap(info.gemHeatmap),
-                    normalizeHeatmap(info.keyHeatmap),
-                    normalizeHeatmap(info.itemHeatmap),
-                    normalizeHeatmap(info.entryHeatmap),
-                    normalizeHeatmap(info.doorHeatmap)
-                ],
+                // heatmap: [
+                //     normalizeHeatmap(info.wallHeatmap),
+                //     normalizeHeatmap(info.enemyHeatmap),
+                //     normalizeHeatmap(info.resourceHeatmap),
+                //     normalizeHeatmap(info.potionHeatmap),
+                //     normalizeHeatmap(info.gemHeatmap),
+                //     normalizeHeatmap(info.keyHeatmap),
+                //     normalizeHeatmap(info.itemHeatmap),
+                //     normalizeHeatmap(info.entryHeatmap),
+                //     normalizeHeatmap(info.doorHeatmap)
+                // ],
                 val: [
                     info.globalDensity,
                     info.wallDensity,
