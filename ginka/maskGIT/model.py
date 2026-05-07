@@ -57,8 +57,12 @@ class GinkaMaskGIT(nn.Module):
 
         # z 投影：将 VQ 码字从 d_z 维映射到 d_model 维，供 cross-attention 使用
         self.z_proj = nn.Sequential(
-            nn.Linear(d_z, d_model),
-            nn.LayerNorm(d_model),
+            nn.Linear(d_z, d_model * 2),
+            nn.LayerNorm(d_model * 2),
+            nn.GELU(),
+            
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model)
         )
 
         # 结构标签嵌入（编码到 d_z 维度）
@@ -69,8 +73,12 @@ class GinkaMaskGIT(nn.Module):
         self.outer_embed  = nn.Embedding(OUTER_VOCAB,  d_z)
 
         self.struct_proj  = nn.Sequential(
-            nn.Linear(d_z, d_model),
-            nn.LayerNorm(d_model),
+            nn.Linear(d_z, d_model * 2),
+            nn.LayerNorm(d_model * 2),
+            nn.GELU(),
+            
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model)
         )
 
         # Transformer：encoder 做 map token 自注意力，decoder 做与 z 的 cross-attention
