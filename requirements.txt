@@ -1,8 +1,7 @@
-torch
-tqdm
-torch-geometric
-transformers
-scipy
-numpy
-cv2
-perlin-noise
+torch==2.6.0
+tqdm==4.66.5
+torch-geometric==2.6.1
+transformers==4.49.0
+scipy==1.13.1
+numpy==2.2.6
+opencv-python==4.11.0.86
