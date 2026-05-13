@@ -285,26 +285,26 @@ def make_random_struct_cond():
 
 def make_stage_init(stage: int, context_map: torch.Tensor) -> torch.Tensor:
     """
-    根据阶段构造 MaskGIT 的推理初始地图。
+    根据阶段构造 MaskGIT 的推理初始地图（与训练端掩码策略一致）。
 
-    Stage 1: 全 MASK（或保留稀疏 wall 种子）
-    Stage 2: 保留 floor/wall 上下文，其余 → MASK
-    Stage 3: 保留完整上下文（floor/wall/door/monster/entrance），resource → MASK
+    Stage 1: 全 MASK
+    Stage 2: 只保留 wall(1)，floor + 功能元素 → MASK
+    Stage 3: 保留 wall(1)/door(2)/monster(4)/entrance(5)，floor + resource → MASK
     """
     init = context_map.clone()
 
     if stage == 1:
-        # 全 MASK（不依赖上下文地图）
         init = torch.full_like(init, MASK_TOKEN)
 
     elif stage == 2:
-        # 保留 floor/wall，其余 → MASK
-        mask = ~torch.isin(init, torch.tensor([0, 1], device=init.device))
-        init[mask] = MASK_TOKEN
+        # 只保留 wall，其余全部 → MASK
+        keep = torch.isin(init, torch.tensor([1], device=init.device))
+        init[~keep] = MASK_TOKEN
 
     else:  # stage == 3
-        # 保留非 resource，resource → MASK
-        init[init == 3] = MASK_TOKEN
+        # 保留 wall + 功能元素，floor + resource → MASK
+        keep = torch.isin(init, torch.tensor([1, 2, 4, 5], device=init.device))
+        init[~keep] = MASK_TOKEN
 
     return init
 
