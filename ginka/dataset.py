@@ -33,11 +33,9 @@ class GinkaSeperatedDataset(Dataset):
     def __init__(
         self,
         data_path: str,
-        subset_weights: tuple = (0.5, 0.3, 0.2),
-        subset2_wall_prob: float = 0.7
+        subset_weights: tuple = (0.5, 0.3, 0.2)
     ):
         self.data = load_data(data_path)
-        self.subset2_wall_prob = subset2_wall_prob
         total = sum(subset_weights)
         self.subset_cumw = [sum(subset_weights[:i+1]) / total for i in range(len(subset_weights))]
 
@@ -134,8 +132,8 @@ class GinkaSeperatedDataset(Dataset):
         enc2 = inp2.copy()
         enc3 = raw.copy()
 
-        if np.random.random() < self.subset2_wall_prob:
-            inp1[self.std_mask()] = self.MASK_ID
+        need_mask = np.isin(inp2, [self.FLOOR, self.WALL])
+        inp1[need_mask & self.std_mask()] = self.MASK_ID
         need_mask = np.isin(inp2, [self.FLOOR, self.DOOR, self.MONSTER, self.ENTRANCE])
         inp2[need_mask] = self.MASK_ID
         need_mask = np.isin(inp3, [self.FLOOR, self.RESOURCE])

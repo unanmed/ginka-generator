@@ -82,7 +82,6 @@ MAP_W = 13 # 地图宽度
 MAP_H = 13 # 地图高度
 MAP_SIZE = MAP_W * MAP_H # 地图大小
 GENERATE_STEP = 18 # MaskGIT 采样步数
-SUBSET2_WALL_PROB = 0.7 # 子集2 进行墙壁掩码的概率
 SUBSET_WEIGHTS = (0.5, 0.3, 0.2) # 每个子集的概率
 
 MG_Z_DROPOUT = 0.1 # z 隐变量 Dropout 概率
@@ -127,8 +126,8 @@ def build_model(device: torch.device):
     # 三组 VQ-VAE 编码器：各自独立编码一个阶段的地图上下文（encoder_stage1/2/3）
     # 输出形状均为 [B, L, d_z]，拼接后送入共用 quantizer
     vq_kwargs = dict(
-        num_classes=NUM_CLASSES, L=VQ_L, K=VQ_K, d_model=VQ_D_MODEL, 
-        nhead=VQ_NHEAD, num_layers=VQ_LAYERS, dim_ff=VQ_DIM_FF, map_size=MAP_SIZE
+        num_classes=NUM_CLASSES, L=VQ_L, K=VQ_K, d_model=VQ_D_MODEL,
+        nhead=VQ_NHEAD, num_layers=VQ_LAYERS, dim_ff=VQ_DIM_FF, map_h=MAP_H, map_w=MAP_W
     )
     vq1 = GinkaVQVAE(**vq_kwargs).to(device) # 编码 stage1 上下文（floor/wall）
     vq2 = GinkaVQVAE(**vq_kwargs).to(device) # 编码 stage2 上下文（door/monster/entrance）
@@ -137,15 +136,15 @@ def build_model(device: torch.device):
     # 三个独立 MaskGIT 解码器，均接收完整的三阶段 z_q 作为条件
     mg1 = GinkaMaskGIT(
         num_classes=NUM_CLASSES, d_model=STAGE1_MG_DMODEL, d_z=VQ_D_Z, dim_ff=STAGE1_MG_DIM_FF,
-        nhead=STAGE1_MG_NHEAD, num_layers=STAGE1_MG_NUM_LAYERS, map_size=MAP_SIZE
+        nhead=STAGE1_MG_NHEAD, num_layers=STAGE1_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W
     ).to(device)
     mg2 = GinkaMaskGIT(
         num_classes=NUM_CLASSES, d_model=STAGE2_MG_DMODEL, d_z=VQ_D_Z, dim_ff=STAGE2_MG_DIM_FF,
-        nhead=STAGE2_MG_NHEAD, num_layers=STAGE2_MG_NUM_LAYERS, map_size=MAP_SIZE
+        nhead=STAGE2_MG_NHEAD, num_layers=STAGE2_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W
     ).to(device)
     mg3 = GinkaMaskGIT(
         num_classes=NUM_CLASSES, d_model=STAGE3_MG_DMODEL, d_z=VQ_D_Z, dim_ff=STAGE3_MG_DIM_FF,
-        nhead=STAGE3_MG_NHEAD, num_layers=STAGE3_MG_NUM_LAYERS, map_size=MAP_SIZE
+        nhead=STAGE3_MG_NHEAD, num_layers=STAGE3_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W
     ).to(device)
 
     # 六个模型参数合并到同一优化器，端到端联合训练
@@ -527,6 +526,19 @@ def train(device: torch.device):
     models = build_model(device)
     vq1, vq2, vq3, mg1, mg2, mg3, quantizer, optimizer, scheduler = models
 
+    tqdm.write(f"Device: {device}")
+    model_list = [
+        ("vq1", vq1), ("vq2", vq2), ("vq3", vq3),
+        ("mg1", mg1), ("mg2", mg2), ("mg3", mg3),
+        ("quantizer", quantizer)
+    ]
+    total_params = 0
+    for name, m in model_list:
+        n = sum(p.numel() for p in m.parameters())
+        total_params += n
+        tqdm.write(f"{name}: {n:,} params")
+    tqdm.write(f"Total: {total_params:,} params")
+
     start_epoch = 0
 
     if args.resume:
@@ -550,14 +562,14 @@ def train(device: torch.device):
     os.makedirs("result/seperated", exist_ok=True)
 
     dataset = GinkaSeperatedDataset(
-        args.train, subset_weights=SUBSET_WEIGHTS, subset2_wall_prob=SUBSET2_WALL_PROB
+        args.train, subset_weights=SUBSET_WEIGHTS
     )
     dataloader = DataLoader(
         dataset, batch_size=BATCH_SIZE, shuffle=True
     )
 
     dataset_val = GinkaSeperatedDataset(
-        args.validate, subset_weights=SUBSET_WEIGHTS, subset2_wall_prob=SUBSET2_WALL_PROB
+        args.validate, subset_weights=SUBSET_WEIGHTS
     )
     dataloader_val = DataLoader(
         dataset_val, batch_size=min(BATCH_SIZE, len(dataset_val) // 8), shuffle=True

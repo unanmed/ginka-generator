@@ -100,17 +100,20 @@ class VQDecodeHead(nn.Module):
 class GinkaVQVAE(nn.Module):
     def __init__(
         self, num_classes: int = 16, L: int = 2, K: int = 16, d_z: int = 64, d_model: int = 128,
-        nhead: int = 4, num_layers: int = 2, dim_ff: int = 256, map_size: int = 13 * 13
+        nhead: int = 4, num_layers: int = 2, dim_ff: int = 256, map_h: int = 13, map_w: int = 13
     ):
         super().__init__()
         self.L = L
         self.K = K
+        self.map_h = map_h
+        self.map_w = map_w
 
         # Tile 嵌入
         self.tile_embedding = nn.Embedding(num_classes, d_model)
 
-        # 地图位置编码（仅覆盖 map_size 个位置，不含 summary token）
-        self.pos_embedding = nn.Parameter(torch.randn(1, map_size, d_model) * 0.02)
+        # 二维因式分解位置编码：行嵌入 + 列嵌入，共享行列语义
+        self.row_embedding = nn.Parameter(torch.randn(1, map_h, d_model) * 0.02)
+        self.col_embedding = nn.Parameter(torch.randn(1, map_w, d_model) * 0.02)
 
         # L 个可学习 summary token，拼接到序列头部
         self.summary_tokens = nn.Parameter(torch.randn(1, L, d_model) * 0.02)
@@ -128,13 +131,15 @@ class GinkaVQVAE(nn.Module):
             nn.LayerNorm(d_z),
         )
 
-    def forward(self, map: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, map: torch.Tensor) -> torch.Tensor:
         # map: [B, H * W]
-        B, L = map.shape
+        B, _ = map.shape
 
-        x = self.tile_embedding(map) # [B, H * W, d_model]
-        x = x + self.pos_embedding # [B, H * W, d_model]
-        
+        row_idx = torch.arange(self.map_h, device=map.device).repeat_interleave(self.map_w)
+        col_idx = torch.arange(self.map_w, device=map.device).repeat(self.map_h)
+        pos = self.row_embedding[0, row_idx] + self.col_embedding[0, col_idx] # [H*W, d_model]
+
+        x = self.tile_embedding(map) + pos # [B, H * W, d_model]
         summary = self.summary_tokens.expand(B, -1, -1) # [B, L, d_model]
         x = torch.cat([summary, x], dim=1) # [B, L+H*W, d_model]
         
@@ -151,7 +156,7 @@ if __name__ == "__main__":
 
     model = GinkaVQVAE(
         num_classes=7, L=2, K=16, d_z=64, d_model=128,
-        nhead=4, num_layers=2, dim_ff=256, map_size=13 * 13,
+        nhead=4, num_layers=2, dim_ff=256, map_h=13, map_w=13
     ).to(device)
 
     print_memory(device, "初始化后")

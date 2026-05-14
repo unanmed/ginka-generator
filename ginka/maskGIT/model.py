@@ -13,22 +13,16 @@ OUTER_VOCAB = 2 # outerWall 0-1
 class GinkaMaskGIT(nn.Module):
     def __init__(
         self, num_classes: int = 16, d_model: int = 192, dim_ff: int = 512,
-        nhead: int = 8, num_layers: int = 4, map_size: int = 13 * 13, d_z: int = 64
+        nhead: int = 8, num_layers: int = 4, map_h: int = 13, map_w: int = 13, d_z: int = 64
     ):
-        """
-        Args:
-            num_classes:     tile 类别数（含 MASK token=15）
-            d_model:         Transformer 内部维度
-            dim_ff:          前馈网络隐层维度
-            nhead:           注意力头数
-            num_layers:      Transformer 层数
-            map_size:        地图 token 总数（H * W）
-        """
         super().__init__()
-        
-        # Tile 嵌入 + 位置编码
+        self.map_h = map_h
+        self.map_w = map_w
+
+        # Tile 嵌入 + 二维因式分解位置编码
         self.tile_embedding = nn.Embedding(num_classes, d_model)
-        self.pos_embedding = nn.Parameter(torch.randn(1, map_size, d_model) * 0.02)
+        self.row_embedding = nn.Parameter(torch.randn(1, map_h, d_model) * 0.02)
+        self.col_embedding = nn.Parameter(torch.randn(1, map_w, d_model) * 0.02)
 
         # z 投影：将 VQ 码字从 d_z 维映射到 d_model 维，供 cross-attention 使用
         self.z_proj = nn.Sequential(
@@ -92,8 +86,10 @@ class GinkaMaskGIT(nn.Module):
         z_mem = torch.cat([z_mem_vq, z_mem_struct], dim=1) # [B, L * 3 + 4, d_model]
 
         # tile embedding + 位置编码
-        x = self.tile_embedding(map) # [B, H * W, d_model]
-        x = x + self.pos_embedding # [B, H * W, d_model]
+        row_idx = torch.arange(self.map_h, device=map.device).repeat_interleave(self.map_w)
+        col_idx = torch.arange(self.map_w, device=map.device).repeat(self.map_h)
+        pos = self.row_embedding[0, row_idx] + self.col_embedding[0, col_idx] # [H*W, d_model]
+        x = self.tile_embedding(map) + pos # [B, H * W, d_model]
 
         # Transformer：encoder 做 map 自注意力，decoder cross-attend z+struct
         x = self.transformer(x, memory=z_mem) # [B, H * W, d_model]
@@ -120,7 +116,8 @@ if __name__ == "__main__":
         dim_ff=2048,
         nhead=8,
         num_layers=6,
-        map_size=13 * 13,
+        map_h=13,
+        map_w=13
     ).to(device)
 
     print_memory(device, "初始化后")
