@@ -136,15 +136,18 @@ def build_model(device: torch.device):
     # 三个独立 MaskGIT 解码器，均接收完整的三阶段 z_q 作为条件
     mg1 = GinkaMaskGIT(
         num_classes=NUM_CLASSES, d_model=STAGE1_MG_DMODEL, d_z=VQ_D_Z, dim_ff=STAGE1_MG_DIM_FF,
-        nhead=STAGE1_MG_NHEAD, num_layers=STAGE1_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W
+        nhead=STAGE1_MG_NHEAD, num_layers=STAGE1_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W,
+        z_seq_len=VQ_L * 3
     ).to(device)
     mg2 = GinkaMaskGIT(
         num_classes=NUM_CLASSES, d_model=STAGE2_MG_DMODEL, d_z=VQ_D_Z, dim_ff=STAGE2_MG_DIM_FF,
-        nhead=STAGE2_MG_NHEAD, num_layers=STAGE2_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W
+        nhead=STAGE2_MG_NHEAD, num_layers=STAGE2_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W,
+        z_seq_len=VQ_L * 3
     ).to(device)
     mg3 = GinkaMaskGIT(
         num_classes=NUM_CLASSES, d_model=STAGE3_MG_DMODEL, d_z=VQ_D_Z, dim_ff=STAGE3_MG_DIM_FF,
-        nhead=STAGE3_MG_NHEAD, num_layers=STAGE3_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W
+        nhead=STAGE3_MG_NHEAD, num_layers=STAGE3_MG_NUM_LAYERS, map_h=MAP_H, map_w=MAP_W,
+        z_seq_len=VQ_L * 3
     ).to(device)
 
     # 六个模型参数合并到同一优化器，端到端联合训练
@@ -596,7 +599,7 @@ def visualize_density_var(batch, z_q, models, device, tile_dict):
     inp1_t = batch["input_stage1"][0:1].to(device).reshape(1, MAP_SIZE)
     struct_t = batch["struct_inject"][0:1].to(device)
     struct_cpu = batch["struct_inject"][0]
-    ref_np = batch["encoder_stage1"][0].numpy().reshape(MAP_H, MAP_W)
+    ref_np = batch["encoder_stage3"][0].numpy().reshape(MAP_H, MAP_W)
     gen_imgs = []
     for _ in range(5):
         rnd_density = random_density(device)
