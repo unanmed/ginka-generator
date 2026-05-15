@@ -53,8 +53,32 @@ class GinkaSeperatedDataset(Dataset):
             item['roomCountLevel'] = self.to_level(item['roomCount'], self.room_th)
             item['branchLevel'] = self.to_level(item['highDegBranchCount'], self.branch_th)
 
+        # 实体密度等级：统计原始地图中门/怪物/资源的数量，等频三档
+        eps = 1e-6
+        door_counts = sorted(self.count_tile(item['map'], self.DOOR) for item in self.data)
+        monster_counts = sorted(self.count_tile(item['map'], self.MONSTER) for item in self.data)
+        resource_counts = sorted(self.count_tile(item['map'], self.RESOURCE) for item in self.data)
+        th1_d, th2_d = door_counts[n // 3], door_counts[2 * n // 3]
+        th1_m, th2_m = monster_counts[n // 3], monster_counts[2 * n // 3]
+        th1_rc, th2_rc = resource_counts[n // 3], resource_counts[2 * n // 3]
+        if th1_d == th2_d: th2_d = th1_d + eps
+        if th1_m == th2_m: th2_m = th1_m + eps
+        if th1_rc == th2_rc: th2_rc = th1_rc + eps
+        self.door_density_th = (th1_d, th2_d)
+        self.monster_density_th = (th1_m, th2_m)
+        self.resource_density_th = (th1_rc, th2_rc)
+
+        for item in self.data:
+            m = item['map']
+            item['doorDensityLevel'] = self.to_level(self.count_tile(m, self.DOOR), self.door_density_th)
+            item['monsterDensityLevel'] = self.to_level(self.count_tile(m, self.MONSTER), self.monster_density_th)
+            item['resourceDensityLevel'] = self.to_level(self.count_tile(m, self.RESOURCE), self.resource_density_th)
+
     def to_level(self, v, th):
         return 0 if v < th[0] else (1 if v < th[1] else 2)
+
+    def count_tile(self, map_data: list, tile_id: int) -> int:
+        return sum(cell == tile_id for row in map_data for cell in row)
 
     def __len__(self):
         return len(self.data)
@@ -174,6 +198,12 @@ class GinkaSeperatedDataset(Dataset):
         cond_outer = item['outerWall']
         struct_inject = torch.LongTensor([cond_sym, cond_room, cond_branch, cond_outer])
 
+        density_inject = torch.LongTensor([
+            item['doorDensityLevel'],
+            item['monsterDensityLevel'],
+            item['resourceDensityLevel']
+        ])
+
         return {
             "input_stage1": torch.LongTensor(out[0]),
             "target_stage1": torch.LongTensor(out[1]),
@@ -184,5 +214,6 @@ class GinkaSeperatedDataset(Dataset):
             "input_stage3": torch.LongTensor(out[6]),
             "target_stage3": torch.LongTensor(out[7]),
             "encoder_stage3": torch.LongTensor(out[8]),
-            "struct_inject": struct_inject
+            "struct_inject": struct_inject,
+            "density_inject": density_inject
         }

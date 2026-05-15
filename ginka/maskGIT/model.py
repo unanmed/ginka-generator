@@ -10,10 +10,16 @@ ROOM_VOCAB = 3 # roomCountLevel 0-2
 BRANCH_VOCAB = 3 # branchLevel 0-2
 OUTER_VOCAB = 2 # outerWall 0-1
 
+# 密度标签词表大小（Low/Medium/High 三档）
+DOOR_DENSITY_VOCAB = 3
+MONSTER_DENSITY_VOCAB = 3
+RESOURCE_DENSITY_VOCAB = 3
+
 class GinkaMaskGIT(nn.Module):
     def __init__(
         self, num_classes: int = 16, d_model: int = 192, dim_ff: int = 512,
-        nhead: int = 8, num_layers: int = 4, map_h: int = 13, map_w: int = 13, d_z: int = 64
+        nhead: int = 8, num_layers: int = 4, map_h: int = 13, map_w: int = 13,
+        d_z: int = 64
     ):
         super().__init__()
         self.map_h = map_h
@@ -57,15 +63,31 @@ class GinkaMaskGIT(nn.Module):
 
         self.output_fc = nn.Linear(d_model, num_classes)
 
+        # 密度标签嵌入 + 独立 MLP（与结构路径完全分离）
+        # 三个密度 embedding 相加后经两层 MLP 映射为单个条件 token
+        self.door_density_embed = nn.Embedding(DOOR_DENSITY_VOCAB, d_z)
+        self.monster_density_embed = nn.Embedding(MONSTER_DENSITY_VOCAB, d_z)
+        self.resource_density_embed = nn.Embedding(RESOURCE_DENSITY_VOCAB, d_z)
+        self.density_mlp = nn.Sequential(
+            nn.Linear(d_z, d_model * 2),
+            nn.LayerNorm(d_model * 2),
+            nn.GELU(),
+
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model)
+        )
+
     def forward(
         self,
         map: torch.Tensor,
         z: torch.Tensor,
-        struct: torch.Tensor
+        struct: torch.Tensor,
+        density: torch.Tensor
     ) -> torch.Tensor:
         # map: [B, H * W]
         # z: [B, L * 3, d_z]
-        # struch: [B, 4]
+        # struct: [B, 4]
+        # density: [B, 3] — [door_level, monster_level, resource_level]
 
         sym_idx = struct[:, 0]
         room_idx = struct[:, 1]
@@ -83,7 +105,16 @@ class GinkaMaskGIT(nn.Module):
         # VQ 码字与结构标签语义不同，使用各自独立的投影层后再拼接
         z_mem_vq = self.z_proj(z) # [B, L, d_model]
         z_mem_struct = self.struct_proj(struct_seq) # [B, 4, d_model]
-        z_mem = torch.cat([z_mem_vq, z_mem_struct], dim=1) # [B, L * 3 + 4, d_model]
+
+        # 密度条件：三个 embedding 相加后经独立 MLP 得到单个条件 token
+        e_density = (
+            self.door_density_embed(density[:, 0]) +
+            self.monster_density_embed(density[:, 1]) +
+            self.resource_density_embed(density[:, 2])
+        ) # [B, d_z]
+        density_token = self.density_mlp(e_density).unsqueeze(1) # [B, 1, d_model]
+
+        z_mem = torch.cat([z_mem_vq, z_mem_struct, density_token], dim=1) # [B, L*3+5, d_model]
 
         # tile embedding + 位置编码
         row_idx = torch.arange(self.map_h, device=map.device).repeat_interleave(self.map_w)
