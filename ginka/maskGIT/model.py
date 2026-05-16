@@ -6,14 +6,7 @@ from .maskGIT import Transformer
 
 # 结构标签词表大小
 SYM_VOCAB = 8 # symmetryH/V/C 三位组合 0-7
-ROOM_VOCAB = 3 # roomCountLevel 0-2
-BRANCH_VOCAB = 3 # branchLevel 0-2
 OUTER_VOCAB = 2 # outerWall 0-1
-
-# 密度标签词表大小（Low/Medium/High 三档）
-DOOR_DENSITY_VOCAB = 3
-MONSTER_DENSITY_VOCAB = 3
-RESOURCE_DENSITY_VOCAB = 3
 
 class GinkaMaskGIT(nn.Module):
     def __init__(
@@ -30,23 +23,18 @@ class GinkaMaskGIT(nn.Module):
         self.row_embedding = nn.Parameter(torch.randn(1, map_h, d_model) * 0.02)
         self.col_embedding = nn.Parameter(torch.randn(1, map_w, d_model) * 0.02)
 
-        # 结构标签嵌入：各自独立嵌入到 d_z 维度，作为独立 token
+        # 结构标签嵌入：sym（0-7）和 outer（0-1），各自独立嵌入到 d_z 维度
         self.sym_embed = nn.Embedding(SYM_VOCAB, d_z)
-        self.room_embed = nn.Embedding(ROOM_VOCAB, d_z)
-        self.branch_embed = nn.Embedding(BRANCH_VOCAB, d_z)
         self.outer_embed = nn.Embedding(OUTER_VOCAB, d_z)
 
-        # 密度标签嵌入：各自独立嵌入到 d_z 维度，作为独立 token
-        self.door_density_embed = nn.Embedding(DOOR_DENSITY_VOCAB, d_z)
-        self.monster_density_embed = nn.Embedding(MONSTER_DENSITY_VOCAB, d_z)
-        self.resource_density_embed = nn.Embedding(RESOURCE_DENSITY_VOCAB, d_z)
+        # 密度连续投影：将 3 个归一化浮点数 [door, monster, resource] ∈ [0,1] 投影为 d_z 维 token
+        self.density_proj = nn.Linear(3, d_z)
 
         # z 投影：逐 token 线性变换，保持序列结构
         self.z_proj = nn.Linear(d_z, d_z)
 
-        # 条件融合投影：将 (z_seq_len + 4 + 3) 个 d_z 维 token 拼接后降维到 d_model
-        # 拼接顺序：z_seq_len 个 z token + 4 个结构 token + 3 个密度 token
-        self.cond_proj = nn.Linear((z_seq_len + 7) * d_z, d_model)
+        # 条件融合投影：z_seq_len 个 z token + 2 个结构 token + 1 个密度 token
+        self.cond_proj = nn.Linear((z_seq_len + 3) * d_z, d_model)
 
         # 纯 encoder Transformer，条件向量 c 通过 AdaLN 注入每一层
         self.transformer = Transformer(
@@ -64,28 +52,22 @@ class GinkaMaskGIT(nn.Module):
     ) -> torch.Tensor:
         # map: [B, H * W]
         # z: [B, z_seq_len, d_z]
-        # struct: [B, 4]
-        # density: [B, 3] — [door_level, monster_level, resource_level]
+        # struct: [B, 2] — [cond_sym(0-7), cond_outer(0-1)]
+        # density: [B, 3] float — [door_norm, monster_norm, resource_norm] ∈ [0, 1]
 
-        # 结构标签：各自嵌入为独立 token，stack 成序列 [B, 4, d_z]
+        # 结构标签：sym + outer，各自嵌入为独立 token，stack 成序列 [B, 2, d_z]
         e_struct = torch.stack([
             self.sym_embed(struct[:, 0]),
-            self.room_embed(struct[:, 1]),
-            self.branch_embed(struct[:, 2]),
-            self.outer_embed(struct[:, 3])
+            self.outer_embed(struct[:, 1])
         ], dim=1)
 
-        # 密度标签：各自嵌入为独立 token，stack 成序列 [B, 3, d_z]
-        e_density = torch.stack([
-            self.door_density_embed(density[:, 0]),
-            self.monster_density_embed(density[:, 1]),
-            self.resource_density_embed(density[:, 2])
-        ], dim=1)
+        # 密度：连续浮点向量投影为单个 d_z 维 token，[B, 1, d_z]
+        e_density = self.density_proj(density).unsqueeze(1)
 
         # z：逐 token 投影，保留序列结构 [B, z_seq_len, d_z]
         z_proj = self.z_proj(z)
 
-        # 拼接所有条件 token → [B, z_seq_len+7, d_z]，展平后投影到 d_model
+        # 拼接所有条件 token → [B, z_seq_len+3, d_z]，展平后投影到 d_model
         cond_seq = torch.cat([z_proj, e_struct, e_density], dim=1)
         c = self.cond_proj(cond_seq.reshape(cond_seq.size(0), -1)) # [B, d_model]
 
@@ -107,17 +89,17 @@ if __name__ == "__main__":
     map_input = torch.randint(0, 7, (4, 13 * 13)).to(device) # [4, 169]
     z_input = torch.randn(4, 6, 64).to(device) # [4, L*3, 64]
     struct_input = torch.tensor([
-        [3, 1, 0, 1],
-        [0, 2, 1, 0],
-        [5, 1, 2, 1],
-        [1, 0, 1, 0],
-    ], dtype=torch.long).to(device) # [4, 4]
+        [3, 1],
+        [0, 0],
+        [5, 1],
+        [1, 0],
+    ], dtype=torch.long).to(device) # [4, 2] — [cond_sym, cond_outer]
     density_input = torch.tensor([
-        [0, 1, 2],
-        [2, 0, 1],
-        [1, 2, 0],
-        [0, 0, 1],
-    ], dtype=torch.long).to(device) # [4, 3]
+        [0.1, 0.5, 0.9],
+        [0.8, 0.2, 0.4],
+        [0.3, 0.7, 0.0],
+        [0.6, 0.1, 1.0],
+    ], dtype=torch.float).to(device) # [4, 3] — [door_norm, monster_norm, resource_norm]
 
     model = GinkaMaskGIT(
         num_classes=7,
@@ -142,8 +124,8 @@ if __name__ == "__main__":
     print(f"推理耗时: {end - start:.4f}s")
     print(f"输出形状: logits={logits.shape}")
     print(f"Tile Embedding parameters: {sum(p.numel() for p in model.tile_embedding.parameters())}")
-    print(f"Struct Projection parameters: {sum(p.numel() for p in model.struct_proj.parameters())}")
     print(f"Density Projection parameters: {sum(p.numel() for p in model.density_proj.parameters())}")
+    print(f"Cond Projection parameters: {sum(p.numel() for p in model.cond_proj.parameters())}")
     print(f"Z Projection parameters: {sum(p.numel() for p in model.z_proj.parameters())}")
     print(f"Transformer parameters: {sum(p.numel() for p in model.transformer.parameters())}")
     print(f"Output FC parameters: {sum(p.numel() for p in model.output_fc.parameters())}")

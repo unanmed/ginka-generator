@@ -174,20 +174,15 @@ def focal_loss(logits, target):
 
 def random_struct(device: torch.device) -> torch.Tensor:
     # 随机采样一组结构参量，用于无条件自由生成
-    # struct_inject 格式：[cond_sym(0-7), cond_room(0-2), cond_branch(0-2), cond_outer(0-1)]
-    cond_sym = random.randint(0, 7) # 地图对称类型
-    cond_room = random.randint(0, 2) # 房间数量档位
-    cond_branch = random.randint(0, 2) # 分支复杂度档位
-    cond_outer = random.randint(0, 1) # 是否有外围走廊
-    return torch.LongTensor([cond_sym, cond_room, cond_branch, cond_outer]).unsqueeze(0).to(device)
+    # struct_inject 格式：[cond_sym(0-7), cond_outer(0-1)]
+    cond_sym = random.randint(0, 7)   # 地图对称类型
+    cond_outer = random.randint(0, 1) # 是否有外围走廈
+    return torch.LongTensor([cond_sym, cond_outer]).unsqueeze(0).to(device)
 
 def random_density(device: torch.device) -> torch.Tensor:
     # 随机采样一组密度参量，用于自由生成
-    # density_inject 格式：[door_level(0-2), monster_level(0-2), resource_level(0-2)]
-    door_lv = random.randint(0, 2)
-    monster_lv = random.randint(0, 2)
-    resource_lv = random.randint(0, 2)
-    return torch.LongTensor([door_lv, monster_lv, resource_lv]).unsqueeze(0).to(device)
+    # density_inject 格式：[door_norm, monster_norm, resource_norm] ∈ [0, 1]
+    return torch.rand(1, 3, device=device)
 
 def maskgit_sample(
     model: torch.nn.Module, inp: torch.Tensor, z: torch.Tensor,
@@ -361,12 +356,11 @@ def annotate_labels(
     struct: torch.Tensor,
     density: torch.Tensor
 ) -> np.ndarray:
-    # 两行标注：第一行结构标签，第二行密度标签
-    lv = ['Low', 'Medium', 'High']
+    # 两行标注：第一行结构标签，第二行密度连续小数
     s = struct.tolist()
     d = density.tolist()
-    line1 = f"sym:{s[0]} room:{lv[s[1]]} branch:{lv[s[2]]} outer:{s[3]}"
-    line2 = f"door:{lv[d[0]]} enemy:{lv[d[1]]} res:{lv[d[2]]}"
+    line1 = f"sym:{s[0]} outer:{s[1]}"
+    line2 = f"door:{d[0]:.2f} enemy:{d[1]:.2f} res:{d[2]:.2f}"
     img = img.copy()
     for text, y in [(line1, 12), (line2, 24)]:
         cv2.putText(img, text, (2, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2)
@@ -601,11 +595,13 @@ def visualize_density_var(batch, z_q, models, device, tile_dict):
     struct_cpu = batch["struct_inject"][0]
     ref_np = batch["encoder_stage3"][0].numpy().reshape(MAP_H, MAP_W)
     gen_imgs = []
-    for _ in range(5):
-        rnd_density = random_density(device)
-        density_cpu = rnd_density[0].cpu()
+    # 固定 z 和结构条件，展开 5 个均匀密度水平对比不同密度条件的生成效果
+    density_values = [0.0, 0.25, 0.5, 0.75, 1.0]
+    for v in density_values:
+        fixed_density = torch.FloatTensor([[v, v, v]]).to(device)
+        density_cpu = fixed_density[0].cpu()
         _, _, merged123 = full_generate_specific_z(
-            inp1_t, z_q[0:1], struct_t, rnd_density, models, device
+            inp1_t, z_q[0:1], struct_t, fixed_density, models, device
         )
         gen_imgs.append(annotate_labels(to_img(merged123), struct_cpu, density_cpu))
     row1 = [to_img(ref_np)] + gen_imgs[:2]
@@ -632,8 +628,9 @@ def validate(dataloader: DataLoader, models: list[torch.nn.Module], device: torc
     loss3_total = torch.Tensor([0]).to(device)
     commit_total = torch.Tensor([0]).to(device)
 
-    # 按档位（0/1/2）累计实体计数差（L1），用于诊断密度条件可控性
-    # 结构：{tile_id: {level: [累计误差, 样本数]}}
+    # 按小模块（Low/Medium/High）累计实体计数差（L1），用于诊断密度条件可控性
+    # 密度连续小数按 [0,1/3)/[1/3,2/3)/[2/3,1] 分框到三模块
+    # 结构：{tile_id: {bucket: [累计误差, 样本数]}}
     density_l1 = {
         2: {0: [0.0, 0], 1: [0.0, 0], 2: [0.0, 0]}, # door
         4: {0: [0.0, 0], 1: [0.0, 0], 2: [0.0, 0]}, # monster
@@ -697,7 +694,8 @@ def validate(dataloader: DataLoader, models: list[torch.nn.Module], device: torc
                         true_map = true2_map[b]
                     pred_count = float((pred_map == tile_id).sum().item())
                     true_count = float((true_map == tile_id).sum().item())
-                    lv = int(density_cpu[b, d_idx].item())
+                    # 连续密度按 [0,1/3)/[1/3,2/3)/[2/3,1] 分戆到三模块
+                    lv = min(int(density_cpu[b, d_idx].item() * 3), 2)
                     density_l1[tile_id][lv][0] += abs(pred_count - true_count)
                     density_l1[tile_id][lv][1] += 1
 
@@ -705,15 +703,15 @@ def validate(dataloader: DataLoader, models: list[torch.nn.Module], device: torc
             visualize_validate(batch, logits1, logits2, logits3, z_q, models, device, tile_dict, epoch, idx)
             idx += 1
 
-    # 输出密度 L1 统计（各档位的平均实体计数，供诊断密度条件效果）
-    lv_names = ['Low', 'Medium', 'High']
+    # 输出密度 L1 统计（各小模块内的平均实体计数，供诊断密度条件效果）
+    bucket_names = ['Low', 'Medium', 'High']
     tile_names = {2: 'door', 4: 'enemy', 3: 'resource'}
     for tile_id in [2, 4, 3]:
         parts = []
         for lv in range(3):
             acc, cnt = density_l1[tile_id][lv]
             avg = acc / cnt if cnt > 0 else 0.0
-            parts.append(f"{lv_names[lv]}={avg:.2f}")
+            parts.append(f"{bucket_names[lv]}={avg:.2f}")
         tqdm.write(f"  density {tile_names[tile_id]}: {' '.join(parts)}")
 
     save_dir = f"result/seperated/e{epoch}"
@@ -777,7 +775,8 @@ def train(device: torch.device):
     )
 
     dataset_val = GinkaSeperatedDataset(
-        args.validate, subset_weights=SUBSET_WEIGHTS
+        args.validate, subset_weights=SUBSET_WEIGHTS,
+        density_stats=dataset.density_stats  # 复用训练集统计量，保证归一化语义一致
     )
     dataloader_val = DataLoader(
         dataset_val, batch_size=min(BATCH_SIZE, len(dataset_val) // 8), shuffle=True
