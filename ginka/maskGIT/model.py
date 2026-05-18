@@ -27,13 +27,13 @@ class GinkaMaskGIT(nn.Module):
         self.sym_embed = nn.Embedding(SYM_VOCAB, d_z)
         self.outer_embed = nn.Embedding(OUTER_VOCAB, d_z)
 
-        # 密度连续投影：将 3 个归一化浮点数 [door, monster, resource] ∈ [0,1] 投影为 d_z 维 token
-        self.density_proj = nn.Linear(3, d_z)
+        # 剩余密度投影：将 5 个浮点数 [wall, door, monster, entrance, resource] 投影为 d_z 维 token
+        self.remain_proj = nn.Linear(5, d_z)
 
         # z 投影：逐 token 线性变换，保持序列结构
         self.z_proj = nn.Linear(d_z, d_z)
 
-        # 条件融合投影：z_seq_len 个 z token + 2 个结构 token + 1 个密度 token
+        # 条件融合投影：z_seq_len 个 z token + 2 个结构 token + 1 个剩余密度 token
         self.cond_proj = nn.Linear((z_seq_len + 3) * d_z, d_model)
 
         # 纯 encoder Transformer，条件向量 c 通过 AdaLN 注入每一层
@@ -48,12 +48,12 @@ class GinkaMaskGIT(nn.Module):
         map: torch.Tensor,
         z: torch.Tensor,
         struct: torch.Tensor,
-        density: torch.Tensor
+        remain: torch.Tensor
     ) -> torch.Tensor:
         # map: [B, H * W]
         # z: [B, z_seq_len, d_z]
         # struct: [B, 2] — [cond_sym(0-7), cond_outer(0-1)]
-        # density: [B, 3] float — [door_norm, monster_norm, resource_norm] ∈ [0, 1]
+        # remain: [B, 5] float — [wall, door, monster, entrance, resource] 剩余密度
 
         # 结构标签：sym + outer，各自嵌入为独立 token，stack 成序列 [B, 2, d_z]
         e_struct = torch.stack([
@@ -61,14 +61,14 @@ class GinkaMaskGIT(nn.Module):
             self.outer_embed(struct[:, 1])
         ], dim=1)
 
-        # 密度：连续浮点向量投影为单个 d_z 维 token，[B, 1, d_z]
-        e_density = self.density_proj(density).unsqueeze(1)
+        # 剩余密度：连续浮点向量投影为单个 d_z 维 token，[B, 1, d_z]
+        e_remain = self.remain_proj(remain).unsqueeze(1)
 
         # z：逐 token 投影，保留序列结构 [B, z_seq_len, d_z]
         z_proj = self.z_proj(z)
 
         # 拼接所有条件 token → [B, z_seq_len+3, d_z]，展平后投影到 d_model
-        cond_seq = torch.cat([z_proj, e_struct, e_density], dim=1)
+        cond_seq = torch.cat([z_proj, e_struct, e_remain], dim=1)
         c = self.cond_proj(cond_seq.reshape(cond_seq.size(0), -1)) # [B, d_model]
 
         # tile embedding + 位置编码
@@ -94,12 +94,12 @@ if __name__ == "__main__":
         [5, 1],
         [1, 0],
     ], dtype=torch.long).to(device) # [4, 2] — [cond_sym, cond_outer]
-    density_input = torch.tensor([
-        [0.1, 0.5, 0.9],
-        [0.8, 0.2, 0.4],
-        [0.3, 0.7, 0.0],
-        [0.6, 0.1, 1.0],
-    ], dtype=torch.float).to(device) # [4, 3] — [door_norm, monster_norm, resource_norm]
+    remain_input = torch.tensor([
+        [0.2, 0.1, 0.5, 0.1, 0.9],
+        [0.4, 0.8, 0.2, 0.0, 0.4],
+        [0.6, 0.3, 0.7, 0.1, 0.0],
+        [0.5, 0.6, 0.1, 0.0, 1.0],
+    ], dtype=torch.float).to(device) # [4, 5] — [wall, door, monster, entrance, resource]
 
     model = GinkaMaskGIT(
         num_classes=7,
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     print_memory(device, "初始化后")
 
     start = time.perf_counter()
-    logits = model(map_input, z_input, struct_input, density_input)
+    logits = model(map_input, z_input, struct_input, remain_input)
     end = time.perf_counter()
 
     print_memory(device, "前向传播后")
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     print(f"推理耗时: {end - start:.4f}s")
     print(f"输出形状: logits={logits.shape}")
     print(f"Tile Embedding parameters: {sum(p.numel() for p in model.tile_embedding.parameters())}")
-    print(f"Density Projection parameters: {sum(p.numel() for p in model.density_proj.parameters())}")
+    print(f"Remain Projection parameters: {sum(p.numel() for p in model.remain_proj.parameters())}")
     print(f"Cond Projection parameters: {sum(p.numel() for p in model.cond_proj.parameters())}")
     print(f"Z Projection parameters: {sum(p.numel() for p in model.z_proj.parameters())}")
     print(f"Transformer parameters: {sum(p.numel() for p in model.transformer.parameters())}")

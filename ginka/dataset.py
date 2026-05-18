@@ -29,6 +29,7 @@ class GinkaSeperatedDataset(Dataset):
     MONSTER = 4
     ENTRANCE = 5
     MASK_ID = 6
+    MAP_SIZE = 13 * 13
 
     def __init__(
         self,
@@ -40,31 +41,32 @@ class GinkaSeperatedDataset(Dataset):
         total = sum(subset_weights)
         self.subset_cumw = [sum(subset_weights[:i+1]) / total for i in range(len(subset_weights))]
 
-        # 实体密度连续归一化：统计门/怪物/资源的数量，用 min/max 归一化到 [0, 1]
-        # density_stats 为 None 时自行计算（训练集），否则复用外部传入的统计量（验证集）
         if density_stats is None:
-            door_counts = [self.count_tile(item['map'], self.DOOR) for item in self.data]
-            monster_counts = [self.count_tile(item['map'], self.MONSTER) for item in self.data]
-            resource_counts = [self.count_tile(item['map'], self.RESOURCE) for item in self.data]
-            self.density_stats = {
-                "door_min": float(min(door_counts)),
-                "door_max": float(max(door_counts)),
-                "monster_min": float(min(monster_counts)),
-                "monster_max": float(max(monster_counts)),
-                "resource_min": float(min(resource_counts)),
-                "resource_max": float(max(resource_counts)),
-            }
+            self.density_stats = self.compute_density_stats()
         else:
             self.density_stats = density_stats
 
-    def norm_density(self, count: int, key: str) -> float:
-        eps = 1e-6
-        lo = self.density_stats[f"{key}_min"]
-        hi = self.density_stats[f"{key}_max"]
-        return float(min(max((count - lo) / (hi - lo + eps), 0.0), 1.0))
-
     def count_tile(self, map_data: list, tile_id: int) -> int:
         return sum(cell == tile_id for row in map_data for cell in row)
+
+    def compute_density_stats(self) -> dict:
+        wall_densities = [self.count_tile(item['map'], self.WALL) / self.MAP_SIZE for item in self.data]
+        door_densities = [self.count_tile(item['map'], self.DOOR) / self.MAP_SIZE for item in self.data]
+        monster_densities = [self.count_tile(item['map'], self.MONSTER) / self.MAP_SIZE for item in self.data]
+        entrance_densities = [self.count_tile(item['map'], self.ENTRANCE) / self.MAP_SIZE for item in self.data]
+        resource_densities = [self.count_tile(item['map'], self.RESOURCE) / self.MAP_SIZE for item in self.data]
+        return {
+            "wall_min_density": float(min(wall_densities)),
+            "wall_max_density": float(max(wall_densities)),
+            "door_min_density": float(min(door_densities)),
+            "door_max_density": float(max(door_densities)),
+            "monster_min_density": float(min(monster_densities)),
+            "monster_max_density": float(max(monster_densities)),
+            "entrance_min_density": float(min(entrance_densities)),
+            "entrance_max_density": float(max(entrance_densities)),
+            "resource_min_density": float(min(resource_densities)),
+            "resource_max_density": float(max(resource_densities)),
+        }
 
     def __len__(self):
         return len(self.data)
@@ -94,9 +96,9 @@ class GinkaSeperatedDataset(Dataset):
         return mask
             
     def create_degreaded(self, raw: np.ndarray):
-        # 阶段一：生成墙壁和入口
+        # 阶段一：仅生成墙壁骨架
         target1 = raw.copy()
-        self.degrade_tile(target1, [self.DOOR, self.RESOURCE, self.MONSTER])
+        self.degrade_tile(target1, [self.DOOR, self.RESOURCE, self.MONSTER, self.ENTRANCE])
         inp1 = target1.copy()
         
         # 阶段二：生成怪物、门，同时也允许生成入口以适配结构
@@ -135,7 +137,7 @@ class GinkaSeperatedDataset(Dataset):
         return inp1, target1, enc1, inp2, target2, enc2, inp3, target3, enc3
 
     def apply_subset2(self, raw: np.ndarray):
-        # 子集 2：掩码所有内容，墙壁随机掩码，不掩码入口
+        # 子集 2：墙壁随机掩码，其它阶段内容由后续阶段补全
         target1, inp1, target2, inp2, target3, inp3 = self.create_degreaded(raw)
 
         enc1 = target1.copy()
@@ -183,10 +185,12 @@ class GinkaSeperatedDataset(Dataset):
         struct_inject = torch.LongTensor([cond_sym, cond_outer])
 
         m = item['map']
-        density_inject = torch.FloatTensor([
-            self.norm_density(self.count_tile(m, self.DOOR), "door"),
-            self.norm_density(self.count_tile(m, self.MONSTER), "monster"),
-            self.norm_density(self.count_tile(m, self.RESOURCE), "resource"),
+        target_density = torch.FloatTensor([
+            self.count_tile(m, self.WALL) / self.MAP_SIZE,
+            self.count_tile(m, self.DOOR) / self.MAP_SIZE,
+            self.count_tile(m, self.MONSTER) / self.MAP_SIZE,
+            self.count_tile(m, self.ENTRANCE) / self.MAP_SIZE,
+            self.count_tile(m, self.RESOURCE) / self.MAP_SIZE,
         ])
 
         return {
@@ -200,5 +204,5 @@ class GinkaSeperatedDataset(Dataset):
             "target_stage3": torch.LongTensor(out[7]),
             "encoder_stage3": torch.LongTensor(out[8]),
             "struct_inject": struct_inject,
-            "density_inject": density_inject
+            "target_density": target_density
         }

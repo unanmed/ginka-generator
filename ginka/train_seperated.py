@@ -48,10 +48,10 @@ VQ_D_MODEL = 128 # VQ-VAE Transformer 模型维度
 VQ_NHEAD = 4 # VQ-VAE 多头注意力头数
 
 # 第一阶段 MaskGIT 超参
-STAGE1_MG_DMODEL = 256
+STAGE1_MG_DMODEL = 512
 STAGE1_MG_NHEAD = 4
 STAGE1_MG_NUM_LAYERS = 6
-STAGE1_MG_DIM_FF = 1024
+STAGE1_MG_DIM_FF = 2048
 
 # 第二阶段 MaskGIT 超参
 STAGE2_MG_DMODEL = 256
@@ -81,8 +81,15 @@ MASK_TOKEN = 6 # 掩码图块
 MAP_W = 13 # 地图宽度
 MAP_H = 13 # 地图高度
 MAP_SIZE = MAP_W * MAP_H # 地图大小
+DENSITY_DIM = 5 # [wall, door, monster, entrance, resource]
 GENERATE_STEP = 18 # MaskGIT 采样步数
 SUBSET_WEIGHTS = (0.5, 0.3, 0.2) # 每个子集的概率
+
+WALL_DENSITY_IDX = 0
+DOOR_DENSITY_IDX = 1
+MONSTER_DENSITY_IDX = 2
+ENTRANCE_DENSITY_IDX = 3
+RESOURCE_DENSITY_IDX = 4
 
 MG_Z_DROPOUT = 0.1 # z 隐变量 Dropout 概率
 MG_STRUCT_DROPOUT = 0.1 # 结构参量 Dropout 概率
@@ -100,7 +107,7 @@ EPOCHS = 400 # 总训练轮数
 CHECKPOINT = 20 # 每隔多少 epoch 保存检查点并执行验证
 
 device = torch.device(
-    "cuda:1" if torch.cuda.is_available()
+    "cuda:0" if torch.cuda.is_available()
     else "mps" if torch.backends.mps.is_available()
     else "cpu"
 )
@@ -179,14 +186,58 @@ def random_struct(device: torch.device) -> torch.Tensor:
     cond_outer = random.randint(0, 1) # 是否有外围走廈
     return torch.LongTensor([cond_sym, cond_outer]).unsqueeze(0).to(device)
 
-def random_density(device: torch.device) -> torch.Tensor:
-    # 随机采样一组密度参量，用于自由生成
-    # density_inject 格式：[door_norm, monster_norm, resource_norm] ∈ [0, 1]
-    return torch.rand(1, 3, device=device)
+def random_target_density(density_stats: dict, device: torch.device) -> torch.Tensor:
+    # 从训练集真实密度范围中采样 wall / door / monster / entrance / resource 目标密度
+    wall_density = random.uniform(density_stats["wall_min_density"], density_stats["wall_max_density"])
+    door_density = random.uniform(density_stats["door_min_density"], density_stats["door_max_density"])
+    monster_density = random.uniform(density_stats["monster_min_density"], density_stats["monster_max_density"])
+    entrance_density = random.uniform(density_stats["entrance_min_density"], density_stats["entrance_max_density"])
+    resource_density = random.uniform(density_stats["resource_min_density"], density_stats["resource_max_density"])
+    return torch.FloatTensor([
+        wall_density,
+        door_density,
+        monster_density,
+        entrance_density,
+        resource_density,
+    ]).unsqueeze(0).to(device)
+
+def compute_remaining(
+    current: torch.Tensor,
+    target_density: torch.Tensor,
+    stage: int
+) -> torch.Tensor:
+    remain = torch.zeros(current.size(0), DENSITY_DIM, device=current.device)
+
+    visible_wall = (current == 1).sum(dim=1).float() / MAP_SIZE
+    visible_door = (current == 2).sum(dim=1).float() / MAP_SIZE
+    visible_monster = (current == 4).sum(dim=1).float() / MAP_SIZE
+    visible_entrance = (current == 5).sum(dim=1).float() / MAP_SIZE
+    visible_resource = (current == 3).sum(dim=1).float() / MAP_SIZE
+
+    if stage == 1:
+        remain[:, WALL_DENSITY_IDX] = (
+            target_density[:, WALL_DENSITY_IDX] - visible_wall
+        ).clamp(min=0.0, max=1.0)
+    elif stage == 2:
+        remain[:, DOOR_DENSITY_IDX] = (
+            target_density[:, DOOR_DENSITY_IDX] - visible_door
+        ).clamp(min=0.0, max=1.0)
+        remain[:, MONSTER_DENSITY_IDX] = (
+            target_density[:, MONSTER_DENSITY_IDX] - visible_monster
+        ).clamp(min=0.0, max=1.0)
+        remain[:, ENTRANCE_DENSITY_IDX] = (
+            target_density[:, ENTRANCE_DENSITY_IDX] - visible_entrance
+        ).clamp(min=0.0, max=1.0)
+    elif stage == 3:
+        remain[:, RESOURCE_DENSITY_IDX] = (
+            target_density[:, RESOURCE_DENSITY_IDX] - visible_resource
+        ).clamp(min=0.0, max=1.0)
+
+    return remain
 
 def maskgit_sample(
     model: torch.nn.Module, inp: torch.Tensor, z: torch.Tensor,
-    struct: torch.Tensor, density: torch.Tensor, steps: int,
+    struct: torch.Tensor, target_density: torch.Tensor, stage: int, steps: int,
     target_tiles: list[int] | None = None, keep_fixed: bool = True
 ) -> np.ndarray:
     # target_tiles: 本阶段负责生成的图块 ID 列表；None 表示接受所有类别（stage1）
@@ -204,7 +255,8 @@ def maskgit_sample(
 
     # 迭代去掩码：每步根据置信度分数重新决定掩码位置
     for step in range(steps):
-        logits = model(current, z, struct, density)
+        remain = compute_remaining(current, target_density, stage)
+        logits = model(current, z, struct, remain)
         probs = F.softmax(logits, dim=-1)
 
         dist = torch.distributions.Categorical(probs)
@@ -270,7 +322,8 @@ def maskgit_sample(
             # 目标模式下，未被填充的位置视为空地（不属于本阶段负责的图块）
             current[0, still_masked] = 0
         else:
-            logits = model(current, z, struct, density)
+            remain = compute_remaining(current, target_density, stage)
+            logits = model(current, z, struct, remain)
             current[0, still_masked] = torch.argmax(logits[0, still_masked], dim=-1)
 
     return current[0].cpu().numpy().reshape(MAP_H, MAP_W)
@@ -278,7 +331,7 @@ def maskgit_sample(
 def full_generate_random_z(
     input: torch.Tensor,
     struct: torch.Tensor,
-    density: torch.Tensor,
+    target_density: torch.Tensor,
     models: list[torch.nn.Module],
     device: torch.device,
     keep_fixed: tuple[bool, bool, bool] = (True, True, True)
@@ -288,14 +341,18 @@ def full_generate_random_z(
     with torch.no_grad():
         z = quantizer.sample(1, VQ_L, device)
 
-        # stage1：生成 floor/wall 骨架
-        pred1_np = maskgit_sample(mg1, input.clone(), z, struct, density, GENERATE_STEP, keep_fixed=keep_fixed[0])
+        # stage1：生成墙壁骨架
+        pred1_np = maskgit_sample(
+            mg1, input.clone(), z, struct, target_density, 1,
+            GENERATE_STEP, target_tiles=[1], keep_fixed=keep_fixed[0]
+        )
         inp2 = torch.tensor(pred1_np.flatten(), dtype=torch.long, device=device).reshape(1, MAP_SIZE)
         inp2[inp2 == 0] = MASK_TOKEN  # 空地位交由 stage2 填充
 
         # stage2：在骨架上生成 door(2)/monster(4)/entrance(5)，非零结果覆盖合并
         pred2_np = maskgit_sample(
-            mg2, inp2, z, struct, density, GENERATE_STEP, target_tiles=[2, 4, 5], keep_fixed=keep_fixed[1]
+            mg2, inp2, z, struct, target_density, 2,
+            GENERATE_STEP, target_tiles=[2, 4, 5], keep_fixed=keep_fixed[1]
         )
         merged12 = pred1_np.copy()
         merged12[pred2_np != 0] = pred2_np[pred2_np != 0]
@@ -304,7 +361,8 @@ def full_generate_random_z(
 
         # stage3：填充 resource(3)
         pred3_np = maskgit_sample(
-            mg3, inp3, z, struct, density, GENERATE_STEP, target_tiles=[3], keep_fixed=keep_fixed[2]
+            mg3, inp3, z, struct, target_density, 3,
+            GENERATE_STEP, target_tiles=[3], keep_fixed=keep_fixed[2]
         )
         merged123 = merged12.copy()
         merged123[pred3_np != 0] = pred3_np[pred3_np != 0]
@@ -315,7 +373,7 @@ def full_generate_specific_z(
     input: torch.Tensor,
     z: torch.Tensor,
     struct: torch.Tensor,
-    density: torch.Tensor,
+    target_density: torch.Tensor,
     models: list[torch.nn.Module],
     device: torch.device,
     keep_fixed: tuple[bool, bool, bool] = (True, True, True)
@@ -324,12 +382,16 @@ def full_generate_specific_z(
 
     with torch.no_grad():
         # 与 full_generate_random_z 相同的三阶段级联，但使用给定的 z
-        pred1_np = maskgit_sample(mg1, input.clone(), z, struct, density, GENERATE_STEP, keep_fixed=keep_fixed[0])
+        pred1_np = maskgit_sample(
+            mg1, input.clone(), z, struct, target_density, 1,
+            GENERATE_STEP, target_tiles=[1], keep_fixed=keep_fixed[0]
+        )
         inp2 = torch.tensor(pred1_np.flatten(), dtype=torch.long, device=device).reshape(1, MAP_SIZE)
         inp2[inp2 == 0] = MASK_TOKEN
 
         pred2_np = maskgit_sample(
-            mg2, inp2, z, struct, density, GENERATE_STEP, target_tiles=[2, 4, 5], keep_fixed=keep_fixed[1]
+            mg2, inp2, z, struct, target_density, 2,
+            GENERATE_STEP, target_tiles=[2, 4, 5], keep_fixed=keep_fixed[1]
         )
         merged12 = pred1_np.copy()
         merged12[pred2_np != 0] = pred2_np[pred2_np != 0]
@@ -337,7 +399,8 @@ def full_generate_specific_z(
         inp3[inp3 == 0] = MASK_TOKEN
 
         pred3_np = maskgit_sample(
-            mg3, inp3, z, struct, density, GENERATE_STEP, target_tiles=[3], keep_fixed=keep_fixed[2]
+            mg3, inp3, z, struct, target_density, 3,
+            GENERATE_STEP, target_tiles=[3], keep_fixed=keep_fixed[2]
         )
         merged123 = merged12.copy()
         merged123[pred3_np != 0] = pred3_np[pred3_np != 0]
@@ -354,15 +417,16 @@ def annotate(img: np.ndarray, text: str) -> np.ndarray:
 def annotate_labels(
     img: np.ndarray,
     struct: torch.Tensor,
-    density: torch.Tensor
+    target_density: torch.Tensor
 ) -> np.ndarray:
-    # 两行标注：第一行结构标签，第二行密度连续小数
+    # 三行标注：第一行结构标签，后两行显示五维目标密度
     s = struct.tolist()
-    d = density.tolist()
+    d = target_density.tolist()
     line1 = f"sym:{s[0]} outer:{s[1]}"
-    line2 = f"door:{d[0]:.2f} enemy:{d[1]:.2f} res:{d[2]:.2f}"
+    line2 = f"wall:{d[0]:.2f} door:{d[1]:.2f}"
+    line3 = f"enemy:{d[2]:.2f} ent:{d[3]:.2f} res:{d[4]:.2f}"
     img = img.copy()
-    for text, y in [(line1, 12), (line2, 24)]:
+    for text, y in [(line1, 12), (line2, 24), (line3, 36)]:
         cv2.putText(img, text, (2, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2)
         cv2.putText(img, text, (2, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
     return img
@@ -428,10 +492,10 @@ def visualize_part2(batch, z_q, models, device, tile_dict):
 
     inp1_t = batch["input_stage1"][0:1].to(device).reshape(1, MAP_SIZE)
     struct_t = batch["struct_inject"][0:1].to(device)
-    density_t = batch["density_inject"][0:1].to(device)
+    target_density_t = batch["target_density"][0:1].to(device)
     kf = rand_keep()
     auto_pred1_np, auto_merged12, auto_merged123 = full_generate_specific_z(
-        inp1_t, z_q[0:1], struct_t, density_t, models, device, keep_fixed=kf
+        inp1_t, z_q[0:1], struct_t, target_density_t, models, device, keep_fixed=kf
     )
     kf_label = 'fix' if kf[0] else 'free'
 
@@ -441,15 +505,15 @@ def visualize_part2(batch, z_q, models, device, tile_dict):
     inp1_np = batch["input_stage1"][0].numpy().reshape(MAP_H, MAP_W)
 
     struct_cpu = batch["struct_inject"][0]
-    density_cpu = batch["density_inject"][0]
+    target_density_cpu = batch["target_density"][0]
 
     rows = [
         [to_img(enc1_np), to_img(enc2_np), to_img(enc3_np)],
         [
             annotate(to_img(inp1_np), kf_label),
-            annotate_labels(to_img(auto_pred1_np), struct_cpu, density_cpu),
-            annotate_labels(to_img(auto_merged12), struct_cpu, density_cpu),
-            annotate_labels(to_img(auto_merged123), struct_cpu, density_cpu)
+            annotate_labels(to_img(auto_pred1_np), struct_cpu, target_density_cpu),
+            annotate_labels(to_img(auto_merged12), struct_cpu, target_density_cpu),
+            annotate_labels(to_img(auto_merged123), struct_cpu, target_density_cpu)
         ],
     ]
     grid = np.ones((2 * img_h + 3 * SEP, 4 * img_w + 5 * SEP, 3), dtype=np.uint8) * 255
@@ -461,7 +525,7 @@ def visualize_part2(batch, z_q, models, device, tile_dict):
     return grid
 
 # 验证可视化 part3：2×3 网格；行1=参考输入+相同 struct 随机 z 生成，行2=随机 struct 生成
-def visualize_part3(batch, models, device, tile_dict):
+def visualize_part3(batch, models, device, tile_dict, density_stats: dict):
     SEP = 3
     TILE_SIZE = 32
     img_h = MAP_H * TILE_SIZE
@@ -472,24 +536,28 @@ def visualize_part3(batch, models, device, tile_dict):
 
     inp1_t = batch["input_stage1"][0:1].to(device).reshape(1, MAP_SIZE)
     struct_ref = batch["struct_inject"][0:1].to(device)
-    density_ref = batch["density_inject"][0:1].to(device)
+    target_density_ref = batch["target_density"][0:1].to(device)
     inp1_np = batch["input_stage1"][0].numpy().reshape(MAP_H, MAP_W)
     struct_cpu = batch["struct_inject"][0]
-    density_cpu = batch["density_inject"][0]
+    target_density_cpu = batch["target_density"][0]
 
     row1 = [to_img(inp1_np)]
     for _ in range(2):
         kf = rand_keep()
-        _, _, merged123 = full_generate_random_z(inp1_t, struct_ref, density_ref, models, device, keep_fixed=kf)
-        row1.append(annotate_labels(to_img(merged123), struct_cpu, density_cpu))
+        _, _, merged123 = full_generate_random_z(
+            inp1_t, struct_ref, target_density_ref, models, device, keep_fixed=kf
+        )
+        row1.append(annotate_labels(to_img(merged123), struct_cpu, target_density_cpu))
 
     row2 = []
     for _ in range(3):
         kf = rand_keep()
         rnd_struct = random_struct(device)
-        rnd_density = random_density(device)
-        _, _, merged123 = full_generate_random_z(inp1_t, rnd_struct, rnd_density, models, device, keep_fixed=kf)
-        row2.append(annotate_labels(to_img(merged123), rnd_struct[0].cpu(), rnd_density[0].cpu()))
+        rnd_target_density = random_target_density(density_stats, device)
+        _, _, merged123 = full_generate_random_z(
+            inp1_t, rnd_struct, rnd_target_density, models, device, keep_fixed=kf
+        )
+        row2.append(annotate_labels(to_img(merged123), rnd_struct[0].cpu(), rnd_target_density[0].cpu()))
 
     rows = [row1, row2]
     grid = np.ones((2 * img_h + 3 * SEP, 3 * img_w + 4 * SEP, 3), dtype=np.uint8) * 255
@@ -501,7 +569,7 @@ def visualize_part3(batch, models, device, tile_dict):
     return grid
 
 # 验证可视化 part4：2×3 网格；以少量随机墙壁作为种子，纯随机 struct+z 自由生成
-def visualize_part4(models, device, tile_dict):
+def visualize_part4(models, device, tile_dict, density_stats: dict):
     SEP = 3
     TILE_SIZE = 32
     img_h = MAP_H * TILE_SIZE
@@ -520,9 +588,11 @@ def visualize_part4(models, device, tile_dict):
     for _ in range(5):
         kf = rand_keep()
         rnd_struct = random_struct(device)
-        rnd_density = random_density(device)
-        _, _, merged123 = full_generate_random_z(seed, rnd_struct, rnd_density, models, device, keep_fixed=kf)
-        results.append(annotate_labels(to_img(merged123), rnd_struct[0].cpu(), rnd_density[0].cpu()))
+        rnd_target_density = random_target_density(density_stats, device)
+        _, _, merged123 = full_generate_random_z(
+            seed, rnd_struct, rnd_target_density, models, device, keep_fixed=kf
+        )
+        results.append(annotate_labels(to_img(merged123), rnd_struct[0].cpu(), rnd_target_density[0].cpu()))
 
     row1 = [to_img(seed_np)] + results[:2]
     row2 = results[2:]
@@ -537,17 +607,18 @@ def visualize_part4(models, device, tile_dict):
 
 def visualize_validate(
     batch, logits1, logits2, logits3, z_q,
-    models: list[torch.nn.Module], device: torch.device, tile_dict, epoch: int, batch_idx: int
+    models: list[torch.nn.Module], device: torch.device, tile_dict,
+    density_stats: dict, epoch: int, batch_idx: int
 ):
     save_dir = f"result/seperated/e{epoch}"
     os.makedirs(save_dir, exist_ok=True)
     cv2.imwrite(f"{save_dir}/val{batch_idx}.png", visualize_part1(batch, logits1, logits2, logits3, tile_dict))
     cv2.imwrite(f"{save_dir}/full{batch_idx}.png", visualize_part2(batch, z_q, models, device, tile_dict))
-    cv2.imwrite(f"{save_dir}/rand{batch_idx}.png", visualize_part3(batch, models, device, tile_dict))
+    cv2.imwrite(f"{save_dir}/rand{batch_idx}.png", visualize_part3(batch, models, device, tile_dict, density_stats))
     cv2.imwrite(f"{save_dir}/dvar{batch_idx}.png", visualize_density_var(batch, z_q, models, device, tile_dict))
 
 # 密度对照图：随机种子+随机结构，5 张随机密度生成，2×3 网格（左上角为种子图）
-def visualize_density_cmp(models, device, tile_dict):
+def visualize_density_cmp(models, device, tile_dict, density_stats: dict):
     SEP = 3
     TILE_SIZE = 32
     img_h = MAP_H * TILE_SIZE
@@ -565,10 +636,10 @@ def visualize_density_cmp(models, device, tile_dict):
     struct_cpu = rnd_struct[0].cpu()
     gen_imgs = []
     for _ in range(5):
-        rnd_density = random_density(device)
-        density_cpu = rnd_density[0].cpu()
-        _, _, merged123 = full_generate_random_z(seed, rnd_struct, rnd_density, models, device)
-        gen_imgs.append(annotate_labels(to_img(merged123), struct_cpu, density_cpu))
+        rnd_target_density = random_target_density(density_stats, device)
+        target_density_cpu = rnd_target_density[0].cpu()
+        _, _, merged123 = full_generate_random_z(seed, rnd_struct, rnd_target_density, models, device)
+        gen_imgs.append(annotate_labels(to_img(merged123), struct_cpu, target_density_cpu))
     row1 = [to_img(seed_np)] + gen_imgs[:2]
     row2 = gen_imgs[2:]
     rows = [row1, row2]
@@ -580,7 +651,7 @@ def visualize_density_cmp(models, device, tile_dict):
             grid[y:y + img_h, x:x + img_w] = img
     return grid
 
-# 固定 z 和结构条件，使用 5 个随机密度各生成一次，2×3 网格（左上角为参考地图）
+# 固定 z 和结构条件，扫描 5 个不同墙壁目标密度，2×3 网格（左上角为参考地图）
 def visualize_density_var(batch, z_q, models, device, tile_dict):
     SEP = 3
     TILE_SIZE = 32
@@ -593,17 +664,18 @@ def visualize_density_var(batch, z_q, models, device, tile_dict):
     inp1_t = batch["input_stage1"][0:1].to(device).reshape(1, MAP_SIZE)
     struct_t = batch["struct_inject"][0:1].to(device)
     struct_cpu = batch["struct_inject"][0]
+    base_target_density = batch["target_density"][0:1].to(device)
     ref_np = batch["encoder_stage3"][0].numpy().reshape(MAP_H, MAP_W)
     gen_imgs = []
-    # 固定 z 和结构条件，展开 5 个均匀密度水平对比不同密度条件的生成效果
-    density_values = [0.0, 0.25, 0.5, 0.75, 1.0]
-    for v in density_values:
-        fixed_density = torch.FloatTensor([[v, v, v]]).to(device)
-        density_cpu = fixed_density[0].cpu()
+    wall_count_values = [20, 35, 50, 65, 80]
+    for wall_count in wall_count_values:
+        fixed_target_density = base_target_density.clone()
+        fixed_target_density[0, WALL_DENSITY_IDX] = wall_count / MAP_SIZE
+        target_density_cpu = fixed_target_density[0].cpu()
         _, _, merged123 = full_generate_specific_z(
-            inp1_t, z_q[0:1], struct_t, fixed_density, models, device
+            inp1_t, z_q[0:1], struct_t, fixed_target_density, models, device
         )
-        gen_imgs.append(annotate_labels(to_img(merged123), struct_cpu, density_cpu))
+        gen_imgs.append(annotate_labels(to_img(merged123), struct_cpu, target_density_cpu))
     row1 = [to_img(ref_np)] + gen_imgs[:2]
     row2 = gen_imgs[2:]
     rows = [row1, row2]
@@ -615,7 +687,14 @@ def visualize_density_var(batch, z_q, models, device, tile_dict):
             grid[y:y + img_h, x:x + img_w] = img
     return grid
 
-def validate(dataloader: DataLoader, models: list[torch.nn.Module], device: torch.device, tile_dict, epoch: int):
+def validate(
+    dataloader: DataLoader,
+    models: list[torch.nn.Module],
+    device: torch.device,
+    tile_dict,
+    density_stats: dict,
+    epoch: int
+):
     vq1, vq2, vq3, mg1, mg2, mg3, quantizer, optimizer, scheduler = models
 
     # 切换为推理模式（关闭 Dropout / BatchNorm 统计更新）
@@ -628,16 +707,13 @@ def validate(dataloader: DataLoader, models: list[torch.nn.Module], device: torc
     loss3_total = torch.Tensor([0]).to(device)
     commit_total = torch.Tensor([0]).to(device)
 
-    # 按小模块（Low/Medium/High）累计实体计数差（L1），用于诊断密度条件可控性
-    # 密度连续小数按 [0,1/3)/[1/3,2/3)/[2/3,1] 分框到三模块
-    # 结构：{tile_id: {bucket: [累计误差, 样本数]}}
-    density_l1 = {
-        2: {0: [0.0, 0], 1: [0.0, 0], 2: [0.0, 0]}, # door
-        4: {0: [0.0, 0], 1: [0.0, 0], 2: [0.0, 0]}, # monster
-        3: {0: [0.0, 0], 1: [0.0, 0], 2: [0.0, 0]}, # resource
+    density_metrics = {
+        1: {"mae": 0.0, "over": 0.0, "count": 0},
+        2: {"mae": 0.0, "over": 0.0, "count": 0},
+        4: {"mae": 0.0, "over": 0.0, "count": 0},
+        5: {"mae": 0.0, "over": 0.0, "count": 0},
+        3: {"mae": 0.0, "over": 0.0, "count": 0},
     }
-    # 三类实体对应的 density_inject 索引
-    tile_density_idx = {2: 0, 4: 1, 3: 2}
 
     idx = 0
 
@@ -658,7 +734,7 @@ def validate(dataloader: DataLoader, models: list[torch.nn.Module], device: torc
             enc3 = batch["encoder_stage3"].to(device).reshape(-1, MAP_SIZE)
 
             struct = batch["struct_inject"].to(device)
-            density = batch["density_inject"].to(device)
+            target_density = batch["target_density"].to(device)
 
             # VQ 编码：各阶段独立编码后拼接、量化
             z_e1 = vq1(enc1) # [B, L, d_z]
@@ -668,57 +744,63 @@ def validate(dataloader: DataLoader, models: list[torch.nn.Module], device: torc
             z_e_all = torch.cat([z_e1, z_e2, z_e3], dim=1) # [B, L*3, d_z]
             z_q, _, commit_loss = quantizer(z_e_all) # [B, L*3, d_z]
 
-            # 三阶段 MaskGIT 推理（均以完整 z_q、struct 和 density 为条件）
-            logits1 = mg1(inp1, z_q, struct, density)
-            logits2 = mg2(inp2, z_q, struct, density)
-            logits3 = mg3(inp3, z_q, struct, density)
+            remain1 = compute_remaining(inp1, target_density, 1)
+            remain2 = compute_remaining(inp2, target_density, 2)
+            remain3 = compute_remaining(inp3, target_density, 3)
+
+            # 三阶段 MaskGIT 推理（均以完整 z_q、struct 和动态 remain 为条件）
+            logits1 = mg1(inp1, z_q, struct, remain1)
+            logits2 = mg2(inp2, z_q, struct, remain2)
+            logits3 = mg3(inp3, z_q, struct, remain3)
 
             loss1_total += focal_loss(logits1, target1)
             loss2_total += focal_loss(logits2, target2)
             loss3_total += focal_loss(logits3, target3)
             commit_total += commit_loss
 
-            # 计算 argmax 预测并统计各档位密度 L1（预测计数与真实计数之差的绝对值）
+            # 计算各目标对象的真实密度误差与过量生成密度
+            pred1_map = torch.argmax(logits1, dim=-1).cpu()
             pred2_map = torch.argmax(logits2, dim=-1).cpu() # [B, MAP_SIZE]
             pred3_map = torch.argmax(logits3, dim=-1).cpu()
+            true1_map = target1.cpu() # [B, MAP_SIZE]
             true2_map = target2.cpu() # [B, MAP_SIZE]
             true3_map = target3.cpu()
-            density_cpu = batch["density_inject"] # [B, 3]
-            for b in range(pred2_map.size(0)):
-                for tile_id, d_idx in tile_density_idx.items():
-                    if tile_id == 3:
-                        pred_map = pred3_map[b]
-                        true_map = true3_map[b]
-                    else:
-                        pred_map = pred2_map[b]
-                        true_map = true2_map[b]
+            metric_sources = [
+                (1, pred1_map, true1_map),
+                (2, pred2_map, true2_map),
+                (4, pred2_map, true2_map),
+                (5, pred2_map, true2_map),
+                (3, pred3_map, true3_map),
+            ]
+            for tile_id, pred_map_batch, true_map_batch in metric_sources:
+                for batch_idx in range(pred_map_batch.size(0)):
+                    pred_map = pred_map_batch[batch_idx]
+                    true_map = true_map_batch[batch_idx]
                     pred_count = float((pred_map == tile_id).sum().item())
                     true_count = float((true_map == tile_id).sum().item())
-                    # 连续密度按 [0,1/3)/[1/3,2/3)/[2/3,1] 分戆到三模块
-                    lv = min(int(density_cpu[b, d_idx].item() * 3), 2)
-                    density_l1[tile_id][lv][0] += abs(pred_count - true_count)
-                    density_l1[tile_id][lv][1] += 1
+                    density_metrics[tile_id]["mae"] += abs(pred_count - true_count) / MAP_SIZE
+                    density_metrics[tile_id]["over"] += max(pred_count - true_count, 0.0) / MAP_SIZE
+                    density_metrics[tile_id]["count"] += 1
 
             # 每个 batch 生成三种可视化图（val/full/rand）
-            visualize_validate(batch, logits1, logits2, logits3, z_q, models, device, tile_dict, epoch, idx)
+            visualize_validate(
+                batch, logits1, logits2, logits3, z_q,
+                models, device, tile_dict, density_stats, epoch, idx
+            )
             idx += 1
 
-    # 输出密度 L1 统计（各小模块内的平均实体计数，供诊断密度条件效果）
-    bucket_names = ['Low', 'Medium', 'High']
-    tile_names = {2: 'door', 4: 'enemy', 3: 'resource'}
-    for tile_id in [2, 4, 3]:
-        parts = []
-        for lv in range(3):
-            acc, cnt = density_l1[tile_id][lv]
-            avg = acc / cnt if cnt > 0 else 0.0
-            parts.append(f"{bucket_names[lv]}={avg:.2f}")
-        tqdm.write(f"  density {tile_names[tile_id]}: {' '.join(parts)}")
+    tile_names = {1: 'wall', 2: 'door', 4: 'enemy', 5: 'entrance', 3: 'resource'}
+    for tile_id in [1, 2, 4, 5, 3]:
+        count = density_metrics[tile_id]["count"]
+        avg_mae = density_metrics[tile_id]["mae"] / count if count > 0 else 0.0
+        avg_over = density_metrics[tile_id]["over"] / count if count > 0 else 0.0
+        tqdm.write(f"  density {tile_names[tile_id]}: mae={avg_mae:.4f} over={avg_over:.4f}")
 
     save_dir = f"result/seperated/e{epoch}"
     os.makedirs(save_dir, exist_ok=True)
     # 每个 epoch 额外生成：无条件自由生成图 + 全局密度对照图
-    cv2.imwrite(f"{save_dir}/free.png", visualize_part4(models, device, tile_dict))
-    cv2.imwrite(f"{save_dir}/density_cmp.png", visualize_density_cmp(models, device, tile_dict))
+    cv2.imwrite(f"{save_dir}/free.png", visualize_part4(models, device, tile_dict, density_stats))
+    cv2.imwrite(f"{save_dir}/density_cmp.png", visualize_density_cmp(models, device, tile_dict, density_stats))
 
     # 恢复训练模式
     for m in [vq1, vq2, vq3, mg1, mg2, mg3]:
@@ -811,9 +893,9 @@ def train(device: torch.device):
             target3 = batch["target_stage3"].to(device).reshape(-1, MAP_SIZE)
             enc3 = batch["encoder_stage3"].to(device).reshape(-1, MAP_SIZE)
 
-            # 结构条件向量：[cond_sym, cond_room, cond_branch, cond_outer]
+            # 结构条件向量：[cond_sym, cond_outer]
             struct = batch["struct_inject"].to(device)
-            density = batch["density_inject"].to(device)
+            target_density = batch["target_density"].to(device)
 
             optimizer.zero_grad()
 
@@ -826,10 +908,14 @@ def train(device: torch.device):
             z_e_all = torch.cat([z_e1, z_e2, z_e3], dim=1) # [B, L*3, d_z]
             z_q, _, commit_loss = quantizer(z_e_all) # [B, L*3, d_z]
 
-            # 三阶段 MaskGIT 前向（均接收完整三阶段 z_q、struct 和 density 条件）
-            logits1 = mg1(inp1, z_q, struct, density)
-            logits2 = mg2(inp2, z_q, struct, density)
-            logits3 = mg3(inp3, z_q, struct, density)
+            remain1 = compute_remaining(inp1, target_density, 1)
+            remain2 = compute_remaining(inp2, target_density, 2)
+            remain3 = compute_remaining(inp3, target_density, 3)
+
+            # 三阶段 MaskGIT 前向（均接收完整三阶段 z_q、struct 和动态 remain 条件）
+            logits1 = mg1(inp1, z_q, struct, remain1)
+            logits2 = mg2(inp2, z_q, struct, remain2)
+            logits3 = mg3(inp3, z_q, struct, remain3)
 
             # 三阶段 Focal Loss + VQ commit loss 加权求和
             loss1 = focal_loss(logits1, target1)
@@ -867,7 +953,7 @@ def train(device: torch.device):
         
         # 每 CHECKPOINT 个 epoch 执行一次验证、可视化和检查点保存
         if (epoch + 1) % CHECKPOINT == 0:
-            losses = validate(dataloader_val, models, device, tile_dict, epoch + 1)
+            losses = validate(dataloader_val, models, device, tile_dict, dataset.density_stats, epoch + 1)
             loss1_total, loss2_total, loss3_total, commit_total = losses
             loss1_weighted = STAGE1_FOCAL_WEIGHT * loss1_total
             loss2_weighted = STAGE2_FOCAL_WEIGHT * loss2_total
