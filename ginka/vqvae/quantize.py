@@ -18,8 +18,23 @@ class VectorQuantizer(nn.Module):
         self.codebook = nn.Embedding(K, d_z)
         nn.init.uniform_(self.codebook.weight, -1.0 / K, 1.0 / K)
 
-    def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        # z_e: [B, L * 3, d_z]
+    def codebook_stats(
+        self, indices: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        flat_indices = indices.reshape(-1)
+        one_hot = F.one_hot(flat_indices, num_classes=self.K).float()
+        avg_probs = one_hot.mean(dim=0)
+        perplexity = torch.exp(
+            -(avg_probs * torch.log(avg_probs.clamp_min(1e-10))).sum()
+        )
+        usage_rate = (avg_probs > 0).float().mean()
+        usage_count = one_hot.sum(dim=0)
+        return perplexity, usage_rate, usage_count
+
+    def forward(
+        self, z_e: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        # z_e: [B, L, d_z]
         """
         Args:
             z_e: [B, L, d_z]  编码器输出的连续向量序列
@@ -31,7 +46,7 @@ class VectorQuantizer(nn.Module):
         """
         B, L, d_z = z_e.shape
 
-        z_flat = z_e.reshape(B * L, d_z) # [B * L * 3, d_z]
+        z_flat = z_e.reshape(B * L, d_z) # [B * L, d_z]
 
         codebook_w = self.codebook.weight  # [K, d_z]
 
@@ -56,13 +71,9 @@ class VectorQuantizer(nn.Module):
         commit_loss = F.mse_loss(z_e, z_q.detach())
 
         indices = indices.reshape(B, L)
-        return z_q_st, indices, commit_loss
+        perplexity, usage_rate, usage_count = self.codebook_stats(indices)
+        return z_q_st, indices, commit_loss, perplexity, usage_count
 
     def sample(self, B: int, L: int, device: torch.device) -> torch.Tensor:
-        indices1 = torch.randint(0, self.K, (B, L), device=device)
-        indices2 = torch.randint(0, self.K, (B, L), device=device)
-        indices3 = torch.randint(0, self.K, (B, L), device=device)
-        z1 = self.codebook(indices1)
-        z2 = self.codebook(indices2)
-        z3 = self.codebook(indices3)
-        return torch.cat([z1, z2, z3], dim=1)
+        indices = torch.randint(0, self.K, (B, L), device=device)
+        return self.codebook(indices)

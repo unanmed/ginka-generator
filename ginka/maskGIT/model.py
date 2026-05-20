@@ -28,13 +28,13 @@ class GinkaMaskGIT(nn.Module):
         self.outer_embed = nn.Embedding(OUTER_VOCAB, d_z)
 
         # 剩余密度投影：将 5 个浮点数 [wall, door, monster, entrance, resource] 投影为 d_z 维 token
-        self.remain_proj = nn.Linear(5, d_z)
+        self.remain_proj = nn.Linear(1, d_z)
 
         # z 投影：逐 token 线性变换，保持序列结构
         self.z_proj = nn.Linear(d_z, d_z)
 
         # 条件融合投影：z_seq_len 个 z token + 2 个结构 token + 1 个剩余密度 token
-        self.cond_proj = nn.Linear((z_seq_len + 3) * d_z, d_model)
+        self.cond_proj = nn.Linear((z_seq_len + 2 + 5) * d_z, d_model)
 
         # 纯 encoder Transformer，条件向量 c 通过 AdaLN 注入每一层
         self.transformer = Transformer(
@@ -62,7 +62,7 @@ class GinkaMaskGIT(nn.Module):
         ], dim=1)
 
         # 剩余密度：连续浮点向量投影为单个 d_z 维 token，[B, 1, d_z]
-        e_remain = self.remain_proj(remain).unsqueeze(1)
+        e_remain = self.remain_proj(remain.unsqueeze(-1))
 
         # z：逐 token 投影，保留序列结构 [B, z_seq_len, d_z]
         z_proj = self.z_proj(z)
