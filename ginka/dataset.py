@@ -71,6 +71,61 @@ class GinkaSeperatedDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
+    def build_struct_inject(self, map_np: np.ndarray, outer_wall: int) -> torch.Tensor:
+        sym_h, sym_v, sym_c = compute_symmetry(map_np)
+        cond_sym = sym_h * 4 + sym_v * 2 + sym_c
+        return torch.LongTensor([cond_sym, outer_wall])
+
+    def build_target_density(self, map_data: list) -> torch.Tensor:
+        return torch.FloatTensor([
+            self.count_tile(map_data, self.WALL) / self.MAP_SIZE,
+            self.count_tile(map_data, self.DOOR) / self.MAP_SIZE,
+            self.count_tile(map_data, self.MONSTER) / self.MAP_SIZE,
+            self.count_tile(map_data, self.ENTRANCE) / self.MAP_SIZE,
+            self.count_tile(map_data, self.RESOURCE) / self.MAP_SIZE
+        ])
+
+    def build_encoder_inputs(self, raw: np.ndarray) -> tuple:
+        target1, inp1, target2, inp2, target3, inp3 = self.create_degreaded(raw.copy())
+        enc1 = target1.copy()
+        enc2 = inp2.copy()
+        enc3 = raw.copy()
+        return enc1, enc2, enc3
+
+    def pack_sample(self, item: dict, map_np: np.ndarray, out: tuple) -> dict:
+        return {
+            "input_stage1": torch.LongTensor(out[0]),
+            "target_stage1": torch.LongTensor(out[1]),
+            "encoder_stage1": torch.LongTensor(out[2]),
+            "input_stage2": torch.LongTensor(out[3]),
+            "target_stage2": torch.LongTensor(out[4]),
+            "encoder_stage2": torch.LongTensor(out[5]),
+            "input_stage3": torch.LongTensor(out[6]),
+            "target_stage3": torch.LongTensor(out[7]),
+            "encoder_stage3": torch.LongTensor(out[8]),
+            "struct_inject": self.build_struct_inject(map_np, item['outerWall']),
+            "target_density": self.build_target_density(item['map'])
+        }
+
+    def random_sample_map(self, idx: int | None = None) -> dict:
+        if idx is None:
+            idx = random.randrange(len(self.data))
+
+        item = self.data[idx]
+        map_np = np.array(item['map'], dtype=np.int64)
+
+        enc1, enc2, enc3 = self.build_encoder_inputs(map_np)
+        sample = {
+            "encoder_stage1": torch.LongTensor(enc1),
+            "encoder_stage2": torch.LongTensor(enc2),
+            "encoder_stage3": torch.LongTensor(enc3),
+            "struct_inject": self.build_struct_inject(map_np, item['outerWall']),
+            "target_density": self.build_target_density(item['map']),
+            "raw_map": torch.LongTensor(map_np)
+        }
+        sample['sample_idx'] = idx
+        return sample
+
     def degrade_tile(self, m: np.ndarray, tiles: list) -> np.ndarray:
         # 将指定 tile ID 替换为 floor(0)，原地修改
         for t in tiles:
@@ -179,30 +234,4 @@ class GinkaSeperatedDataset(Dataset):
         else:
             out = self.apply_subset3(map_np)
 
-        sym_h, sym_v, sym_c = compute_symmetry(map_np)
-        cond_sym = sym_h * 4 + sym_v * 2 + sym_c
-        cond_outer = item['outerWall']
-        struct_inject = torch.LongTensor([cond_sym, cond_outer])
-
-        m = item['map']
-        target_density = torch.FloatTensor([
-            self.count_tile(m, self.WALL) / self.MAP_SIZE,
-            self.count_tile(m, self.DOOR) / self.MAP_SIZE,
-            self.count_tile(m, self.MONSTER) / self.MAP_SIZE,
-            self.count_tile(m, self.ENTRANCE) / self.MAP_SIZE,
-            self.count_tile(m, self.RESOURCE) / self.MAP_SIZE,
-        ])
-
-        return {
-            "input_stage1": torch.LongTensor(out[0]),
-            "target_stage1": torch.LongTensor(out[1]),
-            "encoder_stage1": torch.LongTensor(out[2]),
-            "input_stage2": torch.LongTensor(out[3]),
-            "target_stage2": torch.LongTensor(out[4]),
-            "encoder_stage2": torch.LongTensor(out[5]),
-            "input_stage3": torch.LongTensor(out[6]),
-            "target_stage3": torch.LongTensor(out[7]),
-            "encoder_stage3": torch.LongTensor(out[8]),
-            "struct_inject": struct_inject,
-            "target_density": target_density
-        }
+        return self.pack_sample(item, map_np, out)
