@@ -157,20 +157,21 @@ def build_model(device: torch.device):
         z_seq_len=VQ_L
     ).to(device)
 
-    # 六个模型参数合并到同一优化器，端到端联合训练
-    all_params = (
-        list(vq1.parameters()) + list(vq2.parameters()) + list(vq3.parameters()) +
-        list(mg1.parameters()) + list(mg2.parameters()) + list(mg3.parameters())
-    )
-    optimizer = optim.AdamW(all_params, lr=LR, weight_decay=1e-4)
-    # 余弦退火：从 LR 线性衰减至 MIN_LR，周期为全部训练轮数
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=MIN_LR)
-
     # 三个独立 VectorQuantizer：各阶段使用自己的码本，避免语义空间相互干扰
     quantizer1 = VectorQuantizer(K=VQ_K, d_z=VQ_D_Z).to(device)
     quantizer2 = VectorQuantizer(K=VQ_K, d_z=VQ_D_Z).to(device)
     quantizer3 = VectorQuantizer(K=VQ_K, d_z=VQ_D_Z).to(device)
     quantizers = (quantizer1, quantizer2, quantizer3)
+
+    # 九个模块参数合并到同一优化器，端到端联合训练
+    all_params = (
+        list(vq1.parameters()) + list(vq2.parameters()) + list(vq3.parameters()) +
+        list(mg1.parameters()) + list(mg2.parameters()) + list(mg3.parameters()) +
+        list(quantizer1.parameters()) + list(quantizer2.parameters()) + list(quantizer3.parameters())
+    )
+    optimizer = optim.AdamW(all_params, lr=LR, weight_decay=1e-4)
+    # 余弦退火：从 LR 线性衰减至 MIN_LR，周期为全部训练轮数
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=MIN_LR)
 
     return vq1, vq2, vq3, mg1, mg2, mg3, quantizers, optimizer, scheduler
 
@@ -796,15 +797,9 @@ def train(device: torch.device):
         mg1.load_state_dict(ckpt["mg1"])
         mg2.load_state_dict(ckpt["mg2"])
         mg3.load_state_dict(ckpt["mg3"])
-        if "quantizer1" in ckpt:
-            quantizer1.load_state_dict(ckpt["quantizer1"])
-            quantizer2.load_state_dict(ckpt["quantizer2"])
-            quantizer3.load_state_dict(ckpt["quantizer3"])
-        elif "quantizer" in ckpt:
-            quantizer1.load_state_dict(ckpt["quantizer"])
-            quantizer2.load_state_dict(ckpt["quantizer"])
-            quantizer3.load_state_dict(ckpt["quantizer"])
-            tqdm.write("Loaded legacy shared quantizer weights into quantizer1/2/3")
+        quantizer1.load_state_dict(ckpt["quantizer1"])
+        quantizer2.load_state_dict(ckpt["quantizer2"])
+        quantizer3.load_state_dict(ckpt["quantizer3"])
         # load_optim=False 时可跳过优化器/调度器恢复（适合调整学习率后继续训练）
         if args.load_optim and "optimizer" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer"])
