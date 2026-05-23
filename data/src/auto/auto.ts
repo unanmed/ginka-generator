@@ -38,11 +38,15 @@ export async function autoLabelTowers(
     let ignoredFloorsWall = 0;
     let ignoredFloorsResource = 0;
     let ignoredFloorsDoor = 0;
-    let ignoredFloorsFish = 0;
     let ignoredFloorsEntry = 0;
     let ignoredFloorsCustom = 0;
+    let ignoredFloorsIdle = 0;
+    let ignoredFloorsIdleDoor = 0;
+    let ignoredFloorsIdleEnemy = 0;
     let ignoredFloorsUseless = 0;
-    let ignoredFloorsStd = 0;
+    let ignoredFloorsContinuous = 0;
+    let ignoredFloorsContinuousDoor = 0;
+    let ignoredFloorsContinuousEnemy = 0;
 
     const towers = await parseTowerInfo(towerInfo);
     const paths: string[] = [];
@@ -172,12 +176,40 @@ export async function autoLabelTowers(
                 ignoredFloorsEntry++;
                 continue;
             }
-            if (!config.allowUselessBranch && floorInfo.hasUselessBranch) {
-                ignoredFloorsUseless++;
+            if (floorInfo.hasLargeDoorCluster) {
+                ignoredFloorsContinuousDoor++;
+            }
+            if (floorInfo.hasLargeEnemyCluster) {
+                ignoredFloorsContinuousEnemy++;
+            }
+            if (
+                floorInfo.hasLargeDoorCluster ||
+                floorInfo.hasLargeEnemyCluster
+            ) {
+                ignoredFloorsContinuous++;
                 continue;
             }
-            if (floorInfo.wallDensityStd > config.maxWallDensityStd) {
-                ignoredFloorsStd++;
+            if (
+                floorInfo.idleDoorBranchCount > 0 ||
+                floorInfo.repeatedGuardDoorBranchCount > 0
+            ) {
+                ignoredFloorsIdleDoor++;
+            }
+            if (
+                floorInfo.idleEnemyBranchCount > 0 ||
+                floorInfo.repeatedGuardEnemyBranchCount > 0
+            ) {
+                ignoredFloorsIdleEnemy++;
+            }
+            if (
+                floorInfo.hasIdleBranch ||
+                floorInfo.hasRepeatedGuardIdleBranch
+            ) {
+                ignoredFloorsIdle++;
+                continue;
+            }
+            if (!config.allowUselessBranch && floorInfo.hasUselessBranch) {
+                ignoredFloorsUseless++;
                 continue;
             }
             // 自定义过滤楼层
@@ -206,8 +238,9 @@ export async function autoLabelTowers(
         ignoredFloorsWall +
         ignoredFloorsResource +
         ignoredFloorsDoor +
-        ignoredFloorsFish +
         ignoredFloorsEntry +
+        ignoredFloorsContinuous +
+        ignoredFloorsIdle +
         ignoredFloorsUseless +
         ignoredFloorsCustom;
 
@@ -224,10 +257,13 @@ export async function autoLabelTowers(
     console.log(`墙壁过滤：${ignoredFloorsWall} 层`);
     console.log(`资源过滤：${ignoredFloorsResource} 层`);
     console.log(`门过滤：${ignoredFloorsDoor} 层`);
-    console.log(`咸鱼过滤：${ignoredFloorsFish} 层`);
     console.log(`入口过滤：${ignoredFloorsEntry} 层`);
+    console.log(`连续门过滤：${ignoredFloorsContinuousDoor} 层`);
+    console.log(`连续怪过滤：${ignoredFloorsContinuousEnemy} 层`);
+    console.log(`闲置门过滤：${ignoredFloorsIdleDoor} 层`);
+    console.log(`闲置怪过滤：${ignoredFloorsIdleEnemy} 层`);
+    console.log(`闲置节点过滤：${ignoredFloorsIdle} 层`);
     console.log(`无用节点过滤：${ignoredFloorsUseless} 层`);
-    console.log(`标准差过滤：${ignoredFloorsStd} 层`);
     console.log(`自定义过滤：${ignoredFloorsCustom} 层`);
 
     return labelResult;

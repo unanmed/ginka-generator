@@ -1,5 +1,7 @@
 import { readFile } from 'fs/promises';
 import {
+    BranchType,
+    CannotInOut,
     GraphNodeType,
     IAutoLabelConfig,
     IFloorInfo,
@@ -24,6 +26,14 @@ import {
 } from '../shared';
 import { gaussainHeatmap, generateHeatmap } from './heatmap';
 import { MapTopology } from './topo';
+
+// 格子层四方向通行检查，供无用分支主算法复用。
+const branchCheckDirs: [number, number, CannotInOut, CannotInOut][] = [
+    [-1, 0, CannotInOut.Left, CannotInOut.Right],
+    [1, 0, CannotInOut.Right, CannotInOut.Left],
+    [0, -1, CannotInOut.Top, CannotInOut.Bottom],
+    [0, 1, CannotInOut.Bottom, CannotInOut.Top]
+];
 
 interface IRawTowerInfo {
     /** 作者 id */
@@ -330,9 +340,576 @@ function computeHighDegBranchCount(graph: IMapGraph): number {
 }
 
 /**
- * 根据地图矩阵解析出地图数据
- * @param tower 地图所属塔信息
- * @param map 地图矩阵
+ * 从拓扑节点中取出它对应的代表格子坐标。
+ *
+ * 当前新增的几条局部结构规则都需要把拓扑节点重新映射回格子层，
+ * 例如：
+ * 1. 统计格子层四方向可通行数
+ * 2. 调用拓扑上的入口连通性接口
+ *
+ * 对于 Branch / Entry 节点，它本来就是单格节点；
+ * 对于 Empty / Resource 节点，这里只需要拿其中任意一个格子作为搜索起点即可。
+ */
+function getNodeTile(node: MapGraphNode): number {
+    return node.tiles.values().next().value as number;
+}
+
+/**
+ * 判断格子层上两个相邻格子之间是否至少存在一个可通行方向。
+ *
+ * 这里显式回到格子层，而不是直接看拓扑图邻接关系，原因是：
+ * 同一个 Empty / Resource 拓扑节点可能从多个方向贴住分支节点，
+ * 但在“死胡同分支”这条快捷规则里，我们关心的是分支格子本身到底有几个可走方向。
+ *
+ * @param topo 当前楼层的拓扑信息
+ * @param from 起点格子，使用 y * width + x 的平坦坐标
+ * @param to 终点格子，必须是与起点四邻接的格子
+ * @param outFlag 从起点离开时对应的方向标记
+ * @param inFlag 进入终点时对应的方向标记
+ * @returns 只要 from -> to 或 to -> from 任一方向可走，就视为这两个格子之间存在通路
+ */
+function hasGridPassage(
+    topo: MapTopology,
+    from: number,
+    to: number,
+    outFlag: CannotInOut,
+    inFlag: CannotInOut
+): boolean {
+    const width = topo.convertedMap[0]?.length ?? 0;
+    const fromX = from % width;
+    const fromY = (from - fromX) / width;
+    const toX = to % width;
+    const toY = (to - toX) / width;
+
+    if (
+        topo.noPass[fromY]?.[fromX] ||
+        topo.noPass[toY]?.[toX] ||
+        topo.convertedMap[toY]?.[toX] == null
+    ) {
+        return false;
+    }
+
+    const canGo =
+        !(topo.cannotOut[fromY][fromX] & outFlag) &&
+        !(topo.cannotIn[toY][toX] & inFlag);
+    const canCome =
+        !(topo.cannotOut[toY][toX] & inFlag) &&
+        !(topo.cannotIn[fromY][fromX] & outFlag);
+
+    // 与构图逻辑保持一致：双向只要任一方向能通过，就视为这两个格子存在通路。
+    return canGo || canCome;
+}
+
+/**
+ * 统计某个分支格子在格子层的四方向可通行数。
+ *
+ * 这是无用分支主算法的第一阶段快捷判定：
+ * 如果一个分支格子只有一个可通行方向，那么它在局部结构上就是典型的走廊尽头/死胡同，
+ * 可以直接命中“无用分支”，不必再做后侧候选区域分析。
+ *
+ * @param topo 当前楼层的拓扑信息
+ * @param tile 目标分支格子的平坦坐标
+ * @returns 该格子四个方向中实际可走的方向数量
+ */
+function countGridPassableDirections(topo: MapTopology, tile: number): number {
+    const width = topo.convertedMap[0]?.length ?? 0;
+    const height = topo.convertedMap.length;
+    const x = tile % width;
+    const y = (tile - x) / width;
+    let count = 0;
+
+    for (const [dx, dy, outFlag, inFlag] of branchCheckDirs) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+            continue;
+        }
+
+        const nextTile = ny * width + nx;
+        if (hasGridPassage(topo, tile, nextTile, outFlag, inFlag)) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/**
+ * 在“移除目标分支节点”的前提下，收集某个后侧候选区域能到达的所有拓扑节点。
+ *
+ * 这里的搜索允许经过其他分支节点，因为文档已经明确：
+ * 我们只禁止再次穿过当前正在评估的目标分支，
+ * 不禁止后侧区域继续经过其他门/怪去连接资源。
+ *
+ * @param startNode 后侧候选区域中的任意起点节点
+ * @param ignoredNode 当前正在评估的目标分支节点，搜索时视为删除
+ * @returns 移除目标分支后，从起点仍可到达的所有节点
+ */
+function collectReachableNodes(
+    startNode: MapGraphNode,
+    ignoredNode: MapGraphNode
+): Set<MapGraphNode> {
+    // 从后侧候选区域出发做一次搜索，并把目标分支当作已删除处理。
+    const visited = new Set<MapGraphNode>([startNode]);
+    const queue: MapGraphNode[] = [startNode];
+
+    while (queue.length > 0) {
+        const current = queue.shift()!;
+        for (const neighbor of current.neighbors) {
+            if (neighbor === ignoredNode || visited.has(neighbor)) {
+                continue;
+            }
+            visited.add(neighbor);
+            queue.push(neighbor);
+        }
+    }
+
+    return visited;
+}
+
+/**
+ * 判断单个分支节点是否命中“无用分支”主算法。
+ *
+ * 判定流程对应设计文档中的两阶段：
+ * 1. 先看格子层四方向可通行数，若 <= 1 则直接按死胡同命中。
+ * 2. 否则把该分支从图中临时移除，检查它周围哪些相邻区域会失去入口连通性；
+ *    这些区域就是“后侧候选区域”。
+ * 3. 对每个后侧候选区域做搜索，只要任意一个候选区域还能到达资源节点，
+ *    就说明该分支仍然承担了资源守护作用，不应视为无用分支。
+ * 4. 只有当存在后侧候选区域，且所有后侧候选区域都无法通向资源时，才返回 true。
+ *
+ * 这个实现刻意不处理“整块怪环只有一个出口”这类模式四，
+ * 因为那属于另一类环状子图问题，不适合继续套单节点规则。
+ *
+ * @param topo 当前楼层的拓扑信息
+ * @param branchNode 目标分支节点，必须是门或怪这类 Branch 节点
+ * @returns 如果该分支满足无用分支定义，则返回 true
+ */
+function isUselessBranchNode(
+    topo: MapTopology,
+    branchNode: MapGraphNode
+): boolean {
+    if (branchNode.type !== GraphNodeType.Branch) {
+        return false;
+    }
+
+    const branchTile = getNodeTile(branchNode);
+    if (countGridPassableDirections(topo, branchTile) <= 1) {
+        // 格子层只有一个可通行方向时，直接按死胡同分支处理。
+        return true;
+    }
+
+    // 记录已经并入后侧候选区域的节点，避免同一块区域从多个邻居重复搜索。
+    const handledNodes = new Set<MapGraphNode>();
+    let hasBacksideCandidate = false;
+
+    for (const neighbor of branchNode.neighbors) {
+        if (handledNodes.has(neighbor)) {
+            // 多个邻居可能指向同一个后侧连通区域，已处理过就不重复搜索。
+            continue;
+        }
+
+        const neighborTile = getNodeTile(neighbor);
+        if (topo.connectedToAnyEntry(neighborTile, [branchNode])) {
+            // 删除目标分支后，这个方向仍能回到任意入口，因此它属于前侧或旁路区域。
+            continue;
+        }
+
+        // 失去入口连通性的相邻区域视为该分支的后侧候选区域。
+        hasBacksideCandidate = true;
+
+        const reachableNodes = collectReachableNodes(neighbor, branchNode);
+        for (const node of reachableNodes) {
+            handledNodes.add(node);
+        }
+
+        // 这里按“整块后侧候选区域”聚合判断，而不是只看相邻的单个节点。
+        for (const node of reachableNodes) {
+            if (node.type === GraphNodeType.Resource) {
+                // 任意一个后侧候选区域还能通向资源，就不算无用分支。
+                return false;
+            }
+        }
+    }
+
+    // 若根本不存在失去入口连通性的相邻区域，则这个分支按当前定义不属于无用分支。
+    return hasBacksideCandidate;
+}
+
+/**
+ * 统计同类门团 / 怪团的最大 BFS 连通块大小。
+ *
+ * 这里的“连续门 / 连续怪”严格按拓扑图上的分支节点邻接来定义：
+ * 1. 起点必须是一个 Branch 节点
+ * 2. 只沿“仍然是 Branch，且 branch 类型与起点相同”的邻接边继续 BFS
+ * 3. 门和怪分别统计，绝不把混合结构合并为一个连通块
+ *
+ * 输出里既保留最大门团/怪团大小，也直接给出“是否超过 3”的布尔结果，
+ * 这样过滤层和后续统计层都可以直接复用，不需要再次写阈值判断。
+ *
+ * @param branchNodes 当前楼层里所有分支节点的去重集合
+ * @returns 门团/怪团的最大连通块大小，以及是否命中过大连通块
+ */
+function computeBranchClusterStats(branchNodes: Iterable<MapGraphNode>): {
+    maxDoorClusterSize: number;
+    maxEnemyClusterSize: number;
+    hasLargeDoorCluster: boolean;
+    hasLargeEnemyCluster: boolean;
+} {
+    const visited = new Set<MapGraphNode>();
+    let maxDoorClusterSize = 0;
+    let maxEnemyClusterSize = 0;
+
+    for (const startNode of branchNodes) {
+        if (visited.has(startNode) || startNode.type !== GraphNodeType.Branch) {
+            continue;
+        }
+
+        // 每次从一个尚未访问的分支节点出发，求出它所属的同类连通块大小。
+        visited.add(startNode);
+        let clusterSize = 0;
+        const queue: MapGraphNode[] = [startNode];
+
+        // 只沿同类分支邻接边做 BFS，门和怪分开统计。
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            clusterSize++;
+
+            for (const neighbor of current.neighbors) {
+                if (
+                    visited.has(neighbor) ||
+                    neighbor.type !== GraphNodeType.Branch ||
+                    neighbor.branch !== startNode.branch
+                ) {
+                    continue;
+                }
+
+                visited.add(neighbor);
+                queue.push(neighbor);
+            }
+        }
+
+        // 门团和怪团分别维护各自的最大连通块大小。
+        if (startNode.branch === BranchType.Door) {
+            maxDoorClusterSize = Math.max(maxDoorClusterSize, clusterSize);
+        } else {
+            maxEnemyClusterSize = Math.max(maxEnemyClusterSize, clusterSize);
+        }
+    }
+
+    return {
+        maxDoorClusterSize,
+        maxEnemyClusterSize,
+        // 当前版本阈值固定为 > 3，大小恰好为 3 的团块默认保留。
+        hasLargeDoorCluster: maxDoorClusterSize > 3,
+        hasLargeEnemyCluster: maxEnemyClusterSize > 3
+    };
+}
+
+/**
+ * 统计拓扑图上“只连接到一个邻居节点”的闲置分支。
+ *
+ * 这条规则对应闲置节点章节中的硬规则：
+ * 如果一个分支节点在拓扑图上的 `neighbors.size === 1`，说明玩家只能从同一个拓扑节点到达它，
+ * 而穿过该分支后也不会暴露新的拓扑节点，因此它属于“连通但无影响”的闲置节点。
+ *
+ * 这里刻意使用拓扑图邻居数，而不是格子层可通行方向数，因为这条规则关注的是
+ * “是否会暴露新的拓扑节点”，语义上不同于无用分支里的死胡同快捷规则。
+ *
+ * @param branchNodes 当前楼层里所有分支节点的去重集合
+ * @returns 闲置门/怪数量，以及该楼层是否存在闲置分支
+ */
+function computeIdleBranchStats(branchNodes: Iterable<MapGraphNode>): {
+    idleDoorBranchCount: number;
+    idleEnemyBranchCount: number;
+    hasIdleBranch: boolean;
+} {
+    let idleDoorBranchCount = 0;
+    let idleEnemyBranchCount = 0;
+
+    for (const node of branchNodes) {
+        if (node.type !== GraphNodeType.Branch || node.neighbors.size !== 1) {
+            continue;
+        }
+
+        if (node.branch === BranchType.Door) {
+            idleDoorBranchCount++;
+        } else {
+            idleEnemyBranchCount++;
+        }
+    }
+
+    return {
+        idleDoorBranchCount,
+        idleEnemyBranchCount,
+        hasIdleBranch: idleDoorBranchCount + idleEnemyBranchCount > 0
+    };
+}
+
+interface IMergedNonBranchArea {
+    readonly index: number;
+    readonly nodes: Set<MapGraphNode>;
+    readonly tileCount: number;
+    readonly hasResource: boolean;
+}
+
+interface IRepeatedGuardCandidate {
+    readonly node: MapGraphNode;
+    readonly branch: BranchType;
+    readonly areaA: IMergedNonBranchArea;
+    readonly areaB: IMergedNonBranchArea;
+}
+
+function getNodeRepresentativeTile(node: MapGraphNode): number {
+    return getNodeTile(node);
+}
+
+function buildMergedNonBranchAreas(graph: IMapGraph): {
+    areas: IMergedNonBranchArea[];
+    areaMap: Map<MapGraphNode, IMergedNonBranchArea>;
+} {
+    const visited = new Set<MapGraphNode>();
+    const areas: IMergedNonBranchArea[] = [];
+    const areaMap = new Map<MapGraphNode, IMergedNonBranchArea>();
+    let areaIndex = 0;
+
+    for (const startNode of graph.nodeMap.values()) {
+        if (
+            visited.has(startNode) ||
+            (startNode.type !== GraphNodeType.Empty &&
+                startNode.type !== GraphNodeType.Resource)
+        ) {
+            continue;
+        }
+
+        const nodes = new Set<MapGraphNode>();
+        const queue: MapGraphNode[] = [startNode];
+        visited.add(startNode);
+        let tileCount = 0;
+        let hasResource = false;
+
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            nodes.add(current);
+            tileCount += current.tiles.size;
+            if (current.type === GraphNodeType.Resource) {
+                hasResource = true;
+            }
+
+            for (const neighbor of current.neighbors) {
+                if (
+                    visited.has(neighbor) ||
+                    (neighbor.type !== GraphNodeType.Empty &&
+                        neighbor.type !== GraphNodeType.Resource)
+                ) {
+                    continue;
+                }
+
+                visited.add(neighbor);
+                queue.push(neighbor);
+            }
+        }
+
+        const area: IMergedNonBranchArea = {
+            index: areaIndex++,
+            nodes,
+            tileCount,
+            hasResource
+        };
+        areas.push(area);
+        for (const node of nodes) {
+            areaMap.set(node, area);
+        }
+    }
+
+    return { areas, areaMap };
+}
+
+function buildRepeatedGuardCandidates(
+    branchNodes: Iterable<MapGraphNode>,
+    areaMap: Map<MapGraphNode, IMergedNonBranchArea>
+): IRepeatedGuardCandidate[] {
+    const candidates: IRepeatedGuardCandidate[] = [];
+
+    for (const node of branchNodes) {
+        if (node.type !== GraphNodeType.Branch) {
+            continue;
+        }
+
+        const distinctAreas = new Map<number, IMergedNonBranchArea>();
+        for (const neighbor of node.neighbors) {
+            const area = areaMap.get(neighbor);
+            if (area) {
+                distinctAreas.set(area.index, area);
+            }
+        }
+
+        if (distinctAreas.size !== 2) {
+            continue;
+        }
+
+        const [areaA, areaB] = [...distinctAreas.values()].sort(
+            (a, b) => a.index - b.index
+        );
+
+        // 保守例外：若贴着的是单格资源点，则暂不按重复守卫结构过滤。
+        if (
+            (areaA.tileCount === 1 && areaA.hasResource) ||
+            (areaB.tileCount === 1 && areaB.hasResource)
+        ) {
+            continue;
+        }
+
+        candidates.push({
+            node,
+            branch: node.branch,
+            areaA,
+            areaB
+        });
+    }
+
+    return candidates;
+}
+
+function areBranchTilesEightConnected(
+    a: number,
+    b: number,
+    width: number
+): boolean {
+    const ax = a % width;
+    const ay = (a - ax) / width;
+    const bx = b % width;
+    const by = (b - bx) / width;
+
+    return Math.abs(ax - bx) <= 1 && Math.abs(ay - by) <= 1;
+}
+
+/**
+ * 统计“多个同类分支重复守同一连通区域”的闲置节点模式。
+ *
+ * 实现口径对应文档里的保守版本：
+ * 1. 先把 Empty / Resource 节点临时合并为更大的非分支连通区域。
+ * 2. 若某个分支正好连接到两个不同的非分支区域，则把这两个区域和分支类型组成结构签名。
+ * 3. 具有相同结构签名的同类分支，再按格子层 8 邻接做聚类。
+ * 4. 当某个聚类大小 >= 2 时，视为“重复守同一连通区域”的闲置节点模式命中。
+ *
+ * @param graph 当前楼层的拓扑图
+ * @param branchNodes 当前楼层里所有分支节点的去重集合
+ * @param width 地图宽度，用于做 8 邻接聚类
+ * @returns 重复守卫模式命中的门/怪数量和布尔标签
+ */
+function computeRepeatedGuardIdleStats(
+    graph: IMapGraph,
+    branchNodes: Iterable<MapGraphNode>,
+    width: number
+): {
+    repeatedGuardDoorBranchCount: number;
+    repeatedGuardEnemyBranchCount: number;
+    hasRepeatedGuardIdleBranch: boolean;
+} {
+    const { areaMap } = buildMergedNonBranchAreas(graph);
+    const candidates = buildRepeatedGuardCandidates(branchNodes, areaMap);
+    const groupedCandidates = new Map<string, IRepeatedGuardCandidate[]>();
+
+    for (const candidate of candidates) {
+        const key = `${candidate.branch}:${candidate.areaA.index}:${candidate.areaB.index}`;
+        const group = groupedCandidates.get(key) ?? [];
+        group.push(candidate);
+        groupedCandidates.set(key, group);
+    }
+
+    const repeatedGuardNodes = new Set<MapGraphNode>();
+
+    for (const group of groupedCandidates.values()) {
+        const visited = new Set<MapGraphNode>();
+
+        for (const candidate of group) {
+            if (visited.has(candidate.node)) {
+                continue;
+            }
+
+            const cluster: IRepeatedGuardCandidate[] = [];
+            const queue: IRepeatedGuardCandidate[] = [candidate];
+            visited.add(candidate.node);
+
+            while (queue.length > 0) {
+                const current = queue.shift()!;
+                cluster.push(current);
+                const currentTile = getNodeRepresentativeTile(current.node);
+
+                for (const neighbor of group) {
+                    if (visited.has(neighbor.node)) {
+                        continue;
+                    }
+
+                    const neighborTile = getNodeRepresentativeTile(
+                        neighbor.node
+                    );
+                    if (
+                        !areBranchTilesEightConnected(
+                            currentTile,
+                            neighborTile,
+                            width
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    visited.add(neighbor.node);
+                    queue.push(neighbor);
+                }
+            }
+
+            if (cluster.length >= 2) {
+                for (const member of cluster) {
+                    repeatedGuardNodes.add(member.node);
+                }
+            }
+        }
+    }
+
+    let repeatedGuardDoorBranchCount = 0;
+    let repeatedGuardEnemyBranchCount = 0;
+    for (const node of repeatedGuardNodes) {
+        if (node.type !== GraphNodeType.Branch) {
+            continue;
+        }
+
+        if (node.branch === BranchType.Door) {
+            repeatedGuardDoorBranchCount++;
+        } else {
+            repeatedGuardEnemyBranchCount++;
+        }
+    }
+
+    return {
+        repeatedGuardDoorBranchCount,
+        repeatedGuardEnemyBranchCount,
+        hasRepeatedGuardIdleBranch:
+            repeatedGuardDoorBranchCount + repeatedGuardEnemyBranchCount > 0
+    };
+}
+
+/**
+ * 解析单层地图的统计信息、拓扑结构标签以及局部异常标签。
+ *
+ * 这是楼层清洗阶段最核心的入口之一。它会在一次扫描里同时产出三类信息：
+ * 1. 全局统计量，例如门/怪/资源密度、入口数量、最大空地区域等。
+ * 2. 结构标签，例如对称性、房间数、高连接度分支数。
+ * 3. 局部异常标签，例如无用分支、连续门团、连续怪团。
+ *
+ * 其中“连续门/怪”和“无用分支”是两套互相独立的规则：
+ * 前者只看同类分支在拓扑图上的连通块大小，
+ * 后者看删除某个分支后，后侧区域是否失去入口连通且没有资源收益。
+ *
+ * @param tower 当前楼层所属的塔信息
+ * @param originMap 原始楼层地图，用于识别真实图块语义
+ * @param map 转换后的标签地图，用于做密度统计与热力图计算
+ * @param otherLayers 背景层/前景层等附加图层，用于补充不可入不可出信息
+ * @param config 自动清洗配置
+ * @param converter 原始图块到标签语义的转换器
+ * @param floorId 当前楼层 id，用于入口识别等逻辑
+ * @returns 当前楼层可供过滤与训练使用的完整解析结果
  */
 export function parseFloorInfo(
     tower: ITowerInfo,
@@ -355,7 +932,7 @@ export function parseFloorInfo(
     const area = flattened.length;
     const width = map[0]?.length ?? 0;
 
-    // ── 结构标签计算 ─────────────────────────────────
+    // ---- 结构标签计算 ----
     const { symmetryH, symmetryV, symmetryC } = computeSymmetry(map);
     const outerWall = computeOuterWall(
         map,
@@ -365,7 +942,33 @@ export function parseFloorInfo(
     const roomCount = computeRoomCount(topo.graph, width);
     const highDegBranchCount = computeHighDegBranchCount(topo.graph);
 
-    let hasUselessBranch = false;
+    // 分支节点在拓扑图中是单格节点，先去重后再做局部结构分析。
+    const branchNodes = new Set<MapGraphNode>();
+    topo.graph.nodeMap.forEach(node => {
+        if (node.type === GraphNodeType.Branch) {
+            branchNodes.add(node);
+        }
+    });
+
+    const {
+        maxDoorClusterSize,
+        maxEnemyClusterSize,
+        hasLargeDoorCluster,
+        hasLargeEnemyCluster
+    } = computeBranchClusterStats(branchNodes);
+
+    const { idleDoorBranchCount, idleEnemyBranchCount, hasIdleBranch } =
+        computeIdleBranchStats(branchNodes);
+    const {
+        repeatedGuardDoorBranchCount,
+        repeatedGuardEnemyBranchCount,
+        hasRepeatedGuardIdleBranch
+    } = computeRepeatedGuardIdleStats(topo.graph, branchNodes, width);
+
+    // 无用分支逐点判定：只要任意一个分支命中，整层就带有无用分支标签。
+    const hasUselessBranch = [...branchNodes].some(node =>
+        isUselessBranchNode(topo, node)
+    );
 
     // 统计拓扑图信息
     let maxEmptyArea = 0;
@@ -373,38 +976,6 @@ export function parseFloorInfo(
     topo.graph.areas.forEach(area => {
         area.nodes.forEach(v => {
             if (v.type === GraphNodeType.Empty) {
-                let branchConnection = 0;
-                v.neighbors.forEach(v => {
-                    // 对节点的每个邻居遍历，如果邻居是分支节点，且直接相连的分支节点数小于 2，
-                    // 说明这个连接可能会导致无用节点
-                    // 至于为什么要多一次额外的邻居节点判断：
-                    // |---|---|---|---|---|
-                    // | W | W | D | W | W |
-                    // |---|---|---|---|---|
-                    // | W |   | E |   | W |
-                    // |---|---|---|---|---|
-                    // | W | W | D | W | W |
-                    // |---|---|---|---|---|
-                    if (v.type === GraphNodeType.Branch) {
-                        let directBranch = 0;
-                        for (const n of v.neighbors) {
-                            if (n.type === GraphNodeType.Branch) {
-                                directBranch++;
-                            }
-                        }
-                        if (directBranch < 2) {
-                            branchConnection++;
-                        }
-                    }
-                });
-                // 如果连接的分支数与邻居数相同，且小于等于 0，说明是门或怪物后面连接了一整片空地，是无用分支
-                // 如果连接的分支数与邻居数不相同，说明可能连接了资源节点、入口节点等，这些显然不应该算入无用分支
-                if (
-                    branchConnection <= 1 &&
-                    v.neighbors.size === branchConnection
-                ) {
-                    hasUselessBranch = true;
-                }
                 if (v.tiles.size > maxEmptyArea) {
                     maxEmptyArea = v.tiles.size;
                 }
@@ -416,13 +987,13 @@ export function parseFloorInfo(
         });
     });
 
+    // 把全局统计、结构标签、局部异常标签统一整理成楼层信息对象。
     const floorInfo: IFloorInfo = {
         tower,
         topo,
         map,
         maxEmptyArea,
         maxResourceArea,
-        hasUselessBranch,
         globalDensity: count(flattened, nonEmptyTiles) / area,
         wallDensity: count(flattened, wallTiles) / area,
         doorDensity: count(flattened, doorTiles) / area,
@@ -434,6 +1005,17 @@ export function parseFloorInfo(
         itemDensity: count(flattened, itemTiles) / area,
         entryCount: count(flattened, entryTiles),
         specialDoorCount: count(flattened, specialDoorTiles),
+        maxDoorClusterSize,
+        maxEnemyClusterSize,
+        hasLargeDoorCluster,
+        hasLargeEnemyCluster,
+        idleDoorBranchCount,
+        idleEnemyBranchCount,
+        hasIdleBranch,
+        repeatedGuardDoorBranchCount,
+        repeatedGuardEnemyBranchCount,
+        hasRepeatedGuardIdleBranch,
+        hasUselessBranch,
         wallDensityStd: computeWallDensityStd(map, wallTiles, 5),
         wallHeatmap: gaussainHeatmap(
             generateHeatmap(map, wallTiles, config.heatmapKernel),

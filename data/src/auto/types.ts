@@ -89,7 +89,27 @@ export interface IFloorInfo {
     readonly entryCount: number;
     /** 机关门数量 */
     readonly specialDoorCount: number;
-    /** 是否包含只连接了一个节点的空白节点。这种节点相当于门或怪物后面什么都不加，多数是无用的。 */
+    /** 同类门分支连通块的最大大小 */
+    readonly maxDoorClusterSize: number;
+    /** 同类怪分支连通块的最大大小 */
+    readonly maxEnemyClusterSize: number;
+    /** 是否存在大小超过 3 的同类门分支连通块 */
+    readonly hasLargeDoorCluster: boolean;
+    /** 是否存在大小超过 3 的同类怪分支连通块 */
+    readonly hasLargeEnemyCluster: boolean;
+    /** 拓扑图上只连接到一个邻居节点的闲置门数量 */
+    readonly idleDoorBranchCount: number;
+    /** 拓扑图上只连接到一个邻居节点的闲置怪数量 */
+    readonly idleEnemyBranchCount: number;
+    /** 重复守同一连通区域的闲置门数量 */
+    readonly repeatedGuardDoorBranchCount: number;
+    /** 重复守同一连通区域的闲置怪数量 */
+    readonly repeatedGuardEnemyBranchCount: number;
+    /** 是否存在只连接到一个邻居节点的闲置分支 */
+    readonly hasIdleBranch: boolean;
+    /** 是否存在重复守同一连通区域的闲置分支 */
+    readonly hasRepeatedGuardIdleBranch: boolean;
+    /** 是否包含无资源收益的后侧分支。 */
     readonly hasUselessBranch: boolean;
     /** 墙壁密度标准差 */
     readonly wallDensityStd: number;
