@@ -254,6 +254,10 @@ const labelConfig: IAutoLabelConfig = {
         entry: 5
     },
     allowedSize: [[13, 13]],
+    allowLargeDoorCluster: false,
+    allowLargeEnemyCluster: false,
+    allowIdleBranch: false,
+    allowRepeatedGuardIdleBranch: false,
     allowUselessBranch: false,
     maxWallDensityStd: 1,
     maxEmptyArea: 8,

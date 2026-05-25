@@ -87,6 +87,10 @@ const config: IAutoLabelConfig = {
         entry: 5
     },
     allowedSize: [[5, 5]],
+    allowLargeDoorCluster: false,
+    allowLargeEnemyCluster: false,
+    allowIdleBranch: false,
+    allowRepeatedGuardIdleBranch: false,
     allowUselessBranch: false,
     minEnemyRatio: 0,
     maxEnemyRatio: 1,
@@ -118,6 +122,23 @@ function parseTestFloor(map: number[][]) {
         new MockTileConverter(),
         'F1'
     );
+}
+
+function parseTestFloorWithConverter(
+    map: number[][],
+    converter: IMapTileConverter
+) {
+    return parseFloorInfo(tower, map, map, [], config, converter, 'F1');
+}
+
+class BlockedDirectionConverter extends MockTileConverter {
+    getCannotIn(): number {
+        return 0b1111;
+    }
+
+    getCannotOut(): number {
+        return 0b1111;
+    }
 }
 
 describe('parseFloorInfo useless branch detection', () => {
@@ -257,5 +278,20 @@ describe('parseFloorInfo repeated guard idle detection', () => {
         expect(floor.repeatedGuardDoorBranchCount).toBe(0);
         expect(floor.repeatedGuardEnemyBranchCount).toBe(0);
         expect(floor.hasRepeatedGuardIdleBranch).toBe(false);
+    });
+});
+
+describe('parseFloorInfo wall-only passability detection', () => {
+    it('ignores cannotIn and cannotOut flags in the useless branch quick check', () => {
+        const floor = parseTestFloorWithConverter(
+            [
+                [1, 1, 1, 1, 1, 1],
+                [1, 5, 2, 4, 3, 1],
+                [1, 1, 1, 1, 1, 1]
+            ],
+            new BlockedDirectionConverter()
+        );
+
+        expect(floor.hasUselessBranch).toBe(false);
     });
 });

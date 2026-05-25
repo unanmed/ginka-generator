@@ -1,7 +1,6 @@
 import { readFile } from 'fs/promises';
 import {
     BranchType,
-    CannotInOut,
     GraphNodeType,
     IAutoLabelConfig,
     IFloorInfo,
@@ -28,11 +27,11 @@ import { gaussainHeatmap, generateHeatmap } from './heatmap';
 import { MapTopology } from './topo';
 
 // 格子层四方向通行检查，供无用分支主算法复用。
-const branchCheckDirs: [number, number, CannotInOut, CannotInOut][] = [
-    [-1, 0, CannotInOut.Left, CannotInOut.Right],
-    [1, 0, CannotInOut.Right, CannotInOut.Left],
-    [0, -1, CannotInOut.Top, CannotInOut.Bottom],
-    [0, 1, CannotInOut.Bottom, CannotInOut.Top]
+const branchCheckDirs: [number, number][] = [
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1]
 ];
 
 interface IRawTowerInfo {
@@ -361,43 +360,23 @@ function getNodeTile(node: MapGraphNode): number {
  * 同一个 Empty / Resource 拓扑节点可能从多个方向贴住分支节点，
  * 但在“死胡同分支”这条快捷规则里，我们关心的是分支格子本身到底有几个可走方向。
  *
+ * 当前项目会在更早的楼层过滤阶段直接剔除带 `cannotIn/cannotOut` 的地图，
+ * 所以这里不再额外兼容方向限制，只要目标格子不是墙，就视为该方向可走。
+ *
  * @param topo 当前楼层的拓扑信息
- * @param from 起点格子，使用 y * width + x 的平坦坐标
  * @param to 终点格子，必须是与起点四邻接的格子
- * @param outFlag 从起点离开时对应的方向标记
- * @param inFlag 进入终点时对应的方向标记
- * @returns 只要 from -> to 或 to -> from 任一方向可走，就视为这两个格子之间存在通路
+ * @returns 只要目标格子不是墙，就视为这两个格子之间存在通路
  */
-function hasGridPassage(
-    topo: MapTopology,
-    from: number,
-    to: number,
-    outFlag: CannotInOut,
-    inFlag: CannotInOut
-): boolean {
+function hasGridPassage(topo: MapTopology, to: number): boolean {
     const width = topo.convertedMap[0]?.length ?? 0;
-    const fromX = from % width;
-    const fromY = (from - fromX) / width;
     const toX = to % width;
     const toY = (to - toX) / width;
 
-    if (
-        topo.noPass[fromY]?.[fromX] ||
-        topo.noPass[toY]?.[toX] ||
-        topo.convertedMap[toY]?.[toX] == null
-    ) {
+    if (topo.convertedMap[toY]?.[toX] == null) {
         return false;
     }
 
-    const canGo =
-        !(topo.cannotOut[fromY][fromX] & outFlag) &&
-        !(topo.cannotIn[toY][toX] & inFlag);
-    const canCome =
-        !(topo.cannotOut[toY][toX] & inFlag) &&
-        !(topo.cannotIn[fromY][fromX] & outFlag);
-
-    // 与构图逻辑保持一致：双向只要任一方向能通过，就视为这两个格子存在通路。
-    return canGo || canCome;
+    return topo.convertedMap[toY][toX] !== topo.config.wall;
 }
 
 /**
@@ -418,7 +397,7 @@ function countGridPassableDirections(topo: MapTopology, tile: number): number {
     const y = (tile - x) / width;
     let count = 0;
 
-    for (const [dx, dy, outFlag, inFlag] of branchCheckDirs) {
+    for (const [dx, dy] of branchCheckDirs) {
         const nx = x + dx;
         const ny = y + dy;
         if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
@@ -426,7 +405,7 @@ function countGridPassableDirections(topo: MapTopology, tile: number): number {
         }
 
         const nextTile = ny * width + nx;
-        if (hasGridPassage(topo, tile, nextTile, outFlag, inFlag)) {
+        if (hasGridPassage(topo, nextTile)) {
             count++;
         }
     }

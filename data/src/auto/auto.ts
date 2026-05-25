@@ -176,34 +176,44 @@ export async function autoLabelTowers(
                 ignoredFloorsEntry++;
                 continue;
             }
-            if (floorInfo.hasLargeDoorCluster) {
+            const filteredByLargeDoorCluster =
+                !config.allowLargeDoorCluster && floorInfo.hasLargeDoorCluster;
+            const filteredByLargeEnemyCluster =
+                !config.allowLargeEnemyCluster &&
+                floorInfo.hasLargeEnemyCluster;
+            if (filteredByLargeDoorCluster) {
                 ignoredFloorsContinuousDoor++;
             }
-            if (floorInfo.hasLargeEnemyCluster) {
+            if (filteredByLargeEnemyCluster) {
                 ignoredFloorsContinuousEnemy++;
             }
-            if (
-                floorInfo.hasLargeDoorCluster ||
-                floorInfo.hasLargeEnemyCluster
-            ) {
+            if (filteredByLargeDoorCluster || filteredByLargeEnemyCluster) {
                 ignoredFloorsContinuous++;
                 continue;
             }
-            if (
-                floorInfo.idleDoorBranchCount > 0 ||
-                floorInfo.repeatedGuardDoorBranchCount > 0
-            ) {
+            const filteredByIdleDoorBranch =
+                !config.allowIdleBranch && floorInfo.idleDoorBranchCount > 0;
+            const filteredByRepeatedGuardDoorBranch =
+                !config.allowRepeatedGuardIdleBranch &&
+                floorInfo.repeatedGuardDoorBranchCount > 0;
+            const filteredByIdleEnemyBranch =
+                !config.allowIdleBranch && floorInfo.idleEnemyBranchCount > 0;
+            const filteredByRepeatedGuardEnemyBranch =
+                !config.allowRepeatedGuardIdleBranch &&
+                floorInfo.repeatedGuardEnemyBranchCount > 0;
+            if (filteredByIdleDoorBranch || filteredByRepeatedGuardDoorBranch) {
                 ignoredFloorsIdleDoor++;
             }
             if (
-                floorInfo.idleEnemyBranchCount > 0 ||
-                floorInfo.repeatedGuardEnemyBranchCount > 0
+                filteredByIdleEnemyBranch ||
+                filteredByRepeatedGuardEnemyBranch
             ) {
                 ignoredFloorsIdleEnemy++;
             }
             if (
-                floorInfo.hasIdleBranch ||
-                floorInfo.hasRepeatedGuardIdleBranch
+                (!config.allowIdleBranch && floorInfo.hasIdleBranch) ||
+                (!config.allowRepeatedGuardIdleBranch &&
+                    floorInfo.hasRepeatedGuardIdleBranch)
             ) {
                 ignoredFloorsIdle++;
                 continue;

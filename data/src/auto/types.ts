@@ -188,6 +188,14 @@ export interface IAutoLabelConfig {
     readonly classes: Readonly<IMapBlockConfig>;
     /** 地图允许大小 */
     readonly allowedSize: [number, number][];
+    /** 是否允许同类门分支连通块大小超过 3 */
+    readonly allowLargeDoorCluster: boolean;
+    /** 是否允许同类怪分支连通块大小超过 3 */
+    readonly allowLargeEnemyCluster: boolean;
+    /** 是否允许拓扑图上只连接一个邻居的闲置分支 */
+    readonly allowIdleBranch: boolean;
+    /** 是否允许重复守同一连通区域的闲置分支 */
+    readonly allowRepeatedGuardIdleBranch: boolean;
     /** 是否允许无用节点 */
     readonly allowUselessBranch: boolean;
     /** 最小怪物占比 */
