@@ -11,3 +11,4 @@ app/model/*
 !app/model/.gitkeep
 map_images
 data/result.json
+data/result.filtered.json

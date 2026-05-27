@@ -1,6 +1,6 @@
 import { writeFile } from 'fs/promises';
 import { autoLabelTowers } from './auto/auto';
-import { IAutoLabelConfig, TowerColor } from './auto/types';
+import { IAutoLabelConfig, IConvertedMapInfo, TowerColor } from './auto/types';
 import { GinkaDataset, GinkaTrainData } from './types';
 import { normalizeHeatmap } from './auto/heatmap';
 
@@ -321,63 +321,93 @@ const labelConfig: IAutoLabelConfig = {
     }
 };
 
+function buildTrainData(
+    floor: IConvertedMapInfo,
+    filterReasons?: string[]
+): GinkaTrainData {
+    const width = floor.data.map[0].length;
+    const height = floor.data.map.length;
+    const info = floor.info;
+    const data: GinkaTrainData = {
+        map: floor.data.map,
+        size: [width, height],
+        // heatmap: [
+        //     normalizeHeatmap(info.wallHeatmap),
+        //     normalizeHeatmap(info.enemyHeatmap),
+        //     normalizeHeatmap(info.resourceHeatmap),
+        //     normalizeHeatmap(info.potionHeatmap),
+        //     normalizeHeatmap(info.gemHeatmap),
+        //     normalizeHeatmap(info.keyHeatmap),
+        //     normalizeHeatmap(info.itemHeatmap),
+        //     normalizeHeatmap(info.entryHeatmap),
+        //     normalizeHeatmap(info.doorHeatmap)
+        // ],
+        val: [
+            info.globalDensity,
+            info.wallDensity,
+            info.doorDensity,
+            info.enemyDensity,
+            info.resourceDensity,
+            info.gemDensity,
+            info.potionDensity,
+            info.keyDensity,
+            info.itemDensity,
+            info.entryCount / width / height,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+        ],
+        symmetry: [
+            info.symmetryH ? 1 : 0,
+            info.symmetryV ? 1 : 0,
+            info.symmetryC ? 1 : 0
+        ],
+        outerWall: info.outerWall ? 1 : 0,
+        roomCount: info.roomCount,
+        highDegBranchCount: info.highDegBranchCount
+    };
+    if (filterReasons && filterReasons.length > 0) {
+        data.filterReasons = filterReasons;
+    }
+    return data;
+}
+
+function buildFilteredOutputPath(output: string) {
+    if (/\.json$/i.test(output)) {
+        return output.replace(/\.json$/i, '.filtered.json');
+    }
+    return `${output}.filtered.json`;
+}
+
 (async () => {
+    const filteredOutput = buildFilteredOutputPath(output);
     const result = await autoLabelTowers(towerInfo, folders, labelConfig);
     // 转换格式并写入文件
     const dataset: GinkaDataset = {
         datasetId: Math.floor(Math.random() * 1e12),
         data: {}
     };
-    result.forEach(tower => {
+    const filteredDataset: GinkaDataset = {
+        datasetId: Math.floor(Math.random() * 1e12),
+        data: {}
+    };
+    result.accepted.forEach(tower => {
         tower.maps.forEach(floor => {
             const id = `${tower.tower.name}::${floor.mapId}`;
-            const width = floor.data.map[0].length;
-            const height = floor.data.map.length;
-            const info = floor.info;
-            const data: GinkaTrainData = {
-                map: floor.data.map,
-                size: [width, height],
-                // heatmap: [
-                //     normalizeHeatmap(info.wallHeatmap),
-                //     normalizeHeatmap(info.enemyHeatmap),
-                //     normalizeHeatmap(info.resourceHeatmap),
-                //     normalizeHeatmap(info.potionHeatmap),
-                //     normalizeHeatmap(info.gemHeatmap),
-                //     normalizeHeatmap(info.keyHeatmap),
-                //     normalizeHeatmap(info.itemHeatmap),
-                //     normalizeHeatmap(info.entryHeatmap),
-                //     normalizeHeatmap(info.doorHeatmap)
-                // ],
-                val: [
-                    info.globalDensity,
-                    info.wallDensity,
-                    info.doorDensity,
-                    info.enemyDensity,
-                    info.resourceDensity,
-                    info.gemDensity,
-                    info.potionDensity,
-                    info.keyDensity,
-                    info.itemDensity,
-                    info.entryCount / width / height,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-                ],
-                symmetry: [
-                    info.symmetryH ? 1 : 0,
-                    info.symmetryV ? 1 : 0,
-                    info.symmetryC ? 1 : 0
-                ],
-                outerWall: info.outerWall ? 1 : 0,
-                roomCount: info.roomCount,
-                highDegBranchCount: info.highDegBranchCount
-            };
-            dataset.data[id] = data;
+            dataset.data[id] = buildTrainData(floor);
         });
     });
-    await writeFile(output, JSON.stringify(dataset), 'utf-8');
+    result.filtered.forEach(floor => {
+        const id = `${floor.tower.name}::${floor.mapId}`;
+        filteredDataset.data[id] = buildTrainData(floor, floor.filterReasons);
+    });
+    await Promise.all([
+        writeFile(output, JSON.stringify(dataset), 'utf-8'),
+        writeFile(filteredOutput, JSON.stringify(filteredDataset), 'utf-8')
+    ]);
     console.log(`结果已写入 ${output}`);
+    console.log(`过滤复核数据集已写入 ${filteredOutput}`);
 })();

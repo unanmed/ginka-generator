@@ -13,8 +13,65 @@ export interface ILabelResult {
     readonly maps: IConvertedMapInfo[];
 }
 
+export interface IFilteredMapInfo extends IConvertedMapInfo {
+    /** 命中的复核过滤原因 */
+    readonly filterReasons: string[];
+}
+
+export interface IAutoLabelResult {
+    /** 通过过滤的楼层 */
+    readonly accepted: ILabelResult[];
+    /** 命中复核规则的楼层 */
+    readonly filtered: IFilteredMapInfo[];
+}
+
 function addIssuePrefix(maxLength: number, path: string, content: string) {
     return `${path}: ${' '.repeat(maxLength - path.length)}${content}`;
+}
+
+function collectReviewFilterReasons(
+    floorInfo: IConvertedMapInfo['info'],
+    config: IAutoLabelConfig
+) {
+    const reasons: string[] = [];
+    if (!config.allowLargeDoorCluster && floorInfo.hasLargeDoorCluster) {
+        reasons.push(`large_door_cluster(max=${floorInfo.maxDoorClusterSize})`);
+    }
+    if (!config.allowLargeEnemyCluster && floorInfo.hasLargeEnemyCluster) {
+        reasons.push(
+            `large_enemy_cluster(max=${floorInfo.maxEnemyClusterSize})`
+        );
+    }
+    if (!config.allowIdleBranch && floorInfo.idleDoorBranchCount > 0) {
+        reasons.push(
+            `idle_door_branch(count=${floorInfo.idleDoorBranchCount})`
+        );
+    }
+    if (
+        !config.allowRepeatedGuardIdleBranch &&
+        floorInfo.repeatedGuardDoorBranchCount > 0
+    ) {
+        reasons.push(
+            `repeated_guard_door_branch(count=${floorInfo.repeatedGuardDoorBranchCount})`
+        );
+    }
+    if (!config.allowIdleBranch && floorInfo.idleEnemyBranchCount > 0) {
+        reasons.push(
+            `idle_enemy_branch(count=${floorInfo.idleEnemyBranchCount})`
+        );
+    }
+    if (
+        !config.allowRepeatedGuardIdleBranch &&
+        floorInfo.repeatedGuardEnemyBranchCount > 0
+    ) {
+        reasons.push(
+            `repeated_guard_enemy_branch(count=${floorInfo.repeatedGuardEnemyBranchCount})`
+        );
+    }
+    if (!config.allowUselessBranch && floorInfo.hasUselessBranch) {
+        reasons.push('useless_branch');
+    }
+    return reasons;
 }
 
 /**
@@ -27,8 +84,9 @@ export async function autoLabelTowers(
     towerInfo: string,
     pathList: string[],
     config: IAutoLabelConfig
-) {
+): Promise<IAutoLabelResult> {
     const labelResult: ILabelResult[] = [];
+    const filteredMaps: IFilteredMapInfo[] = [];
 
     // 统计被不同规则过滤掉的楼层
     let ignoredFloorsSize = 0;
@@ -132,6 +190,10 @@ export async function autoLabelTowers(
                 mapId: name,
                 info: floorInfo
             };
+            const reviewFilterReasons = collectReviewFilterReasons(
+                floorInfo,
+                config
+            );
             // 配置过滤楼层
             if (floorInfo.maxEmptyArea > config.maxEmptyArea) {
                 ignoredMaxEmptyArea++;
@@ -189,6 +251,10 @@ export async function autoLabelTowers(
             }
             if (filteredByLargeDoorCluster || filteredByLargeEnemyCluster) {
                 ignoredFloorsContinuous++;
+                filteredMaps.push({
+                    ...floorData,
+                    filterReasons: reviewFilterReasons
+                });
                 continue;
             }
             const filteredByIdleDoorBranch =
@@ -216,10 +282,18 @@ export async function autoLabelTowers(
                     floorInfo.hasRepeatedGuardIdleBranch)
             ) {
                 ignoredFloorsIdle++;
+                filteredMaps.push({
+                    ...floorData,
+                    filterReasons: reviewFilterReasons
+                });
                 continue;
             }
             if (!config.allowUselessBranch && floorInfo.hasUselessBranch) {
                 ignoredFloorsUseless++;
+                filteredMaps.push({
+                    ...floorData,
+                    filterReasons: reviewFilterReasons
+                });
                 continue;
             }
             // 自定义过滤楼层
@@ -275,6 +349,10 @@ export async function autoLabelTowers(
     console.log(`闲置节点过滤：${ignoredFloorsIdle} 层`);
     console.log(`无用节点过滤：${ignoredFloorsUseless} 层`);
     console.log(`自定义过滤：${ignoredFloorsCustom} 层`);
+    console.log(`复核数据集：${filteredMaps.length} 层`);
 
-    return labelResult;
+    return {
+        accepted: labelResult,
+        filtered: filteredMaps
+    };
 }

@@ -57,6 +57,8 @@ export interface GinkaTrainData {
     roomCount: number;
     /** 高连接度分支节点数量原始值 */
     highDegBranchCount: number;
+    /** 被过滤样本的原因标签，供人工复核使用 */
+    filterReasons?: string[];
 }
 
 export interface GinkaDataset {
