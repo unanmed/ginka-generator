@@ -243,7 +243,7 @@ const labelConfig: IAutoLabelConfig = {
         wall: 1,
         decoration: 16,
         commonDoors: [2],
-        specialDoors: [2, 2],
+        specialDoors: [6, 6],
         keys: [3],
         redGems: [3],
         blueGems: [3],

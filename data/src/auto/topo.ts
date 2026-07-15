@@ -2,6 +2,7 @@ import {
     CannotInOut,
     GraphNodeType,
     BranchType,
+    DoorKind,
     ResourceType,
     type IMapTopology,
     type IMapGraph,
@@ -160,14 +161,19 @@ export class MapTopology implements IMapTopology {
 
                 if (type === GraphNodeType.Branch) {
                     const tile = this.originMap[y][x];
+                    const isDoor = converter.isDoor(tile);
+                    const convertedTile = this.convertedMap[y][x];
                     nodeMap.set(idx, {
                         type: GraphNodeType.Branch,
                         index: nodeIndex++,
                         tiles,
                         neighbors,
-                        branch: converter.isDoor(tile)
-                            ? BranchType.Door
-                            : BranchType.Enemy
+                        branch: isDoor ? BranchType.Door : BranchType.Enemy,
+                        doorKind: isDoor
+                            ? this.config.specialDoors.includes(convertedTile)
+                                ? DoorKind.Special
+                                : DoorKind.Common
+                            : DoorKind.Common
                     });
                     continue;
                 }

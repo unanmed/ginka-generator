@@ -22,7 +22,7 @@ class MockTileConverter implements IMapTileConverter {
     }
 
     isDoor(tile: number): boolean {
-        return tile === 2;
+        return tile === 2 || tile === 6;
     }
 
     isEnemy(tile: number): boolean {
@@ -76,7 +76,7 @@ const config: IAutoLabelConfig = {
         wall: 1,
         decoration: 16,
         commonDoors: [2],
-        specialDoors: [6, 7],
+        specialDoors: [6, 6],
         keys: [3],
         redGems: [3],
         blueGems: [3],

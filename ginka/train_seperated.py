@@ -33,7 +33,7 @@ from shared.image import matrix_to_image_cv
 #   stage3 → resource（资源点）
 
 # 图块 ID 定义：
-# 0. 空地   1. 墙壁   2. 门   3. 资源   4. 怪物   5. 入口   6. 掩码（MASK_TOKEN）
+# 0. 空地   1. 墙壁   2. 普通门   3. 资源   4. 怪物   5. 入口   6. 机关门   7. 掩码（MASK_TOKEN）
 
 # 共用 VQ-VAE 超参
 # 三组编码器（vq1/vq2/vq3）共享相同超参，分别对三阶段地图上下文独立编码
@@ -76,8 +76,8 @@ STAGE2_VQ_WEIGHT = 0.5
 STAGE3_VQ_WEIGHT = 0.5
 
 # 全局参数
-NUM_CLASSES = 7 # 图块类型数
-MASK_TOKEN = 6 # 掩码图块
+NUM_CLASSES = 8 # 图块类型数
+MASK_TOKEN = 7 # 掩码图块
 MAP_W = 13 # 地图宽度
 MAP_H = 13 # 地图高度
 MAP_SIZE = MAP_W * MAP_H # 地图大小
@@ -276,7 +276,7 @@ def compute_remaining(
     remain = torch.zeros(current.size(0), DENSITY_DIM, device=current.device)
 
     visible_wall = (current == 1).sum(dim=1).float() / MAP_SIZE
-    visible_door = (current == 2).sum(dim=1).float() / MAP_SIZE
+    visible_door = ((current == 2) | (current == 6)).sum(dim=1).float() / MAP_SIZE
     visible_monster = (current == 4).sum(dim=1).float() / MAP_SIZE
     visible_entrance = (current == 5).sum(dim=1).float() / MAP_SIZE
     visible_resource = (current == 3).sum(dim=1).float() / MAP_SIZE
@@ -419,7 +419,7 @@ def full_generate_specific_z(
 
         pred2_np = maskgit_sample(
             mg2, inp2, z2, struct, target_density, 2,
-            GENERATE_STEP, target_tiles=[2, 4, 5], keep_fixed=keep_fixed[1]
+            GENERATE_STEP, target_tiles=[2, 6, 4, 5], keep_fixed=keep_fixed[1]
         )
         merged12 = pred1_np.copy()
         merged12[pred2_np != 0] = pred2_np[pred2_np != 0]
@@ -742,6 +742,9 @@ def validate(
                     true_map = true_map_batch[batch_idx]
                     pred_count = float((pred_map == tile_id).sum().item())
                     true_count = float((true_map == tile_id).sum().item())
+                    if tile_id == 2:
+                        pred_count += float((pred_map == 6).sum().item())
+                        true_count += float((true_map == 6).sum().item())
                     density_metrics[tile_id]["mae"] += abs(pred_count - true_count) / MAP_SIZE
                     density_metrics[tile_id]["over"] += max(pred_count - true_count, 0.0) / MAP_SIZE
                     density_metrics[tile_id]["count"] += 1

@@ -13,6 +13,7 @@ export class MapTileConverter implements IMapTileConverter {
 
     private readonly emptyTiles = new Set<number>([0]);
     private readonly doorTiles = new Set<number>();
+    private readonly specialDoorTiles = new Set<number>();
     private readonly enemyTiles = new Set<number>();
     private readonly resourceTiles = new Set<number>();
     private readonly keyTiles = new Set<number>();
@@ -224,8 +225,13 @@ export class MapTileConverter implements IMapTileConverter {
         if (isDoor) {
             this.doorTiles.add(tile);
             this.noPassMap.set(tile, false);
-            const label = labels.commonDoors[0];
-            this.labelMap.set(tile, label);
+            if (blockId === 'specialDoor') {
+                this.specialDoorTiles.add(tile);
+                this.labelMap.set(tile, labels.specialDoors[0]);
+            } else {
+                const label = labels.commonDoors[0];
+                this.labelMap.set(tile, label);
+            }
         } else if (isEnemy) {
             this.enemyTiles.add(tile);
             this.noPassMap.set(tile, false);

@@ -1,10 +1,10 @@
 // 基本图块定义
-// 新方案 ID：0=空地 1=墙壁 2=门 3=资源(all) 4=怪物 5=入口 6=掩码
+// 新方案 ID：0=空地 1=墙壁 2=普通门 3=资源(all) 4=怪物 5=入口 6=机关门 7=掩码
 export const emptyTiles = new Set([0]);
 export const wallTiles = new Set([1]);
 export const decorationTiles = new Set([16]);
 export const commonDoorTiles = new Set([2]);
-export const specialDoorTiles = new Set([2]);
+export const specialDoorTiles = new Set([6]);
 export const keyTiles = new Set([3]);
 export const redGemTiles = new Set([3]);
 export const blueGemTiles = new Set([3]);

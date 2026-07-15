@@ -1,6 +1,7 @@
 import { readFile } from 'fs/promises';
 import {
     BranchType,
+    DoorKind,
     GraphNodeType,
     IAutoLabelConfig,
     IFloorInfo,
@@ -466,9 +467,18 @@ function collectReachableNodes(
  */
 function isUselessBranchNode(
     topo: MapTopology,
-    branchNode: MapGraphNode
+    branchNode: MapGraphNode,
+    specialDoorLinkedEnemies?: Set<MapGraphNode>
 ): boolean {
     if (branchNode.type !== GraphNodeType.Branch) {
+        return false;
+    }
+
+    if (
+        branchNode.branch === BranchType.Enemy &&
+        specialDoorLinkedEnemies &&
+        specialDoorLinkedEnemies.has(branchNode)
+    ) {
         return false;
     }
 
@@ -598,13 +608,18 @@ function computeBranchClusterStats(branchNodes: Iterable<MapGraphNode>): {
  * @param branchNodes 当前楼层里所有分支节点的去重集合
  * @returns 闲置门/怪数量，以及该楼层是否存在闲置分支
  */
-function computeIdleBranchStats(branchNodes: Iterable<MapGraphNode>): {
+function computeIdleBranchStats(
+    branchNodes: Iterable<MapGraphNode>,
+    specialDoorLinkedEnemies?: Set<MapGraphNode>
+): {
     idleDoorBranchCount: number;
     idleEnemyBranchCount: number;
+    ignoredIdleEnemyBySpecialDoorCount: number;
     hasIdleBranch: boolean;
 } {
     let idleDoorBranchCount = 0;
     let idleEnemyBranchCount = 0;
+    let ignoredIdleEnemyBySpecialDoorCount = 0;
 
     for (const node of branchNodes) {
         if (node.type !== GraphNodeType.Branch || node.neighbors.size !== 1) {
@@ -613,6 +628,11 @@ function computeIdleBranchStats(branchNodes: Iterable<MapGraphNode>): {
 
         if (node.branch === BranchType.Door) {
             idleDoorBranchCount++;
+        } else if (
+            specialDoorLinkedEnemies &&
+            specialDoorLinkedEnemies.has(node)
+        ) {
+            ignoredIdleEnemyBySpecialDoorCount++;
         } else {
             idleEnemyBranchCount++;
         }
@@ -621,6 +641,7 @@ function computeIdleBranchStats(branchNodes: Iterable<MapGraphNode>): {
     return {
         idleDoorBranchCount,
         idleEnemyBranchCount,
+        ignoredIdleEnemyBySpecialDoorCount,
         hasIdleBranch: idleDoorBranchCount + idleEnemyBranchCount > 0
     };
 }
@@ -702,6 +723,59 @@ function buildMergedNonBranchAreas(graph: IMapGraph): {
     }
 
     return { areas, areaMap };
+}
+
+function findSpecialDoorLinkedEnemyNodes(
+    branchNodes: Iterable<MapGraphNode>,
+    areaMap: Map<MapGraphNode, IMergedNonBranchArea>
+): Set<MapGraphNode> {
+    const specialDoorNodes = new Set<MapGraphNode>();
+    for (const node of branchNodes) {
+        if (
+            node.type === GraphNodeType.Branch &&
+            node.branch === BranchType.Door &&
+            node.doorKind === DoorKind.Special
+        ) {
+            specialDoorNodes.add(node);
+        }
+    }
+
+    if (specialDoorNodes.size === 0) {
+        return new Set();
+    }
+
+    const specialDoorLinkedAreas = new Set<IMergedNonBranchArea>();
+    for (const specialDoor of specialDoorNodes) {
+        for (const neighbor of specialDoor.neighbors) {
+            const area = areaMap.get(neighbor);
+            if (area) {
+                specialDoorLinkedAreas.add(area);
+            }
+        }
+    }
+
+    if (specialDoorLinkedAreas.size === 0) {
+        return new Set();
+    }
+
+    const linkedEnemyNodes = new Set<MapGraphNode>();
+    for (const node of branchNodes) {
+        if (
+            node.type !== GraphNodeType.Branch ||
+            node.branch !== BranchType.Enemy
+        ) {
+            continue;
+        }
+        for (const neighbor of node.neighbors) {
+            const area = areaMap.get(neighbor);
+            if (area && specialDoorLinkedAreas.has(area)) {
+                linkedEnemyNodes.add(node);
+                break;
+            }
+        }
+    }
+
+    return linkedEnemyNodes;
 }
 
 function buildRepeatedGuardCandidates(
@@ -936,18 +1010,44 @@ export function parseFloorInfo(
         hasLargeEnemyCluster
     } = computeBranchClusterStats(branchNodes);
 
-    const { idleDoorBranchCount, idleEnemyBranchCount, hasIdleBranch } =
-        computeIdleBranchStats(branchNodes);
+    const mergedAreas = buildMergedNonBranchAreas(topo.graph);
+    const specialDoorLinkedEnemies = findSpecialDoorLinkedEnemyNodes(
+        branchNodes,
+        mergedAreas.areaMap
+    );
+    const specialDoorLinkedEnemyCount = specialDoorLinkedEnemies.size;
+
+    const {
+        idleDoorBranchCount,
+        idleEnemyBranchCount,
+        ignoredIdleEnemyBySpecialDoorCount,
+        hasIdleBranch
+    } = computeIdleBranchStats(branchNodes, specialDoorLinkedEnemies);
     const {
         repeatedGuardDoorBranchCount,
         repeatedGuardEnemyBranchCount,
         hasRepeatedGuardIdleBranch
     } = computeRepeatedGuardIdleStats(topo.graph, branchNodes, width);
 
-    // 无用分支逐点判定：只要任意一个分支命中，整层就带有无用分支标签。
-    const hasUselessBranch = [...branchNodes].some(node =>
-        isUselessBranchNode(topo, node)
-    );
+    let hasUselessBranch = false;
+    let ignoredUselessBranchBySpecialDoorCount = 0;
+    for (const node of branchNodes) {
+        const useless = isUselessBranchNode(
+            topo,
+            node,
+            specialDoorLinkedEnemies
+        );
+        if (useless) {
+            if (
+                node.branch === BranchType.Enemy &&
+                specialDoorLinkedEnemies.has(node)
+            ) {
+                ignoredUselessBranchBySpecialDoorCount++;
+            } else {
+                hasUselessBranch = true;
+            }
+        }
+    }
 
     // 统计拓扑图信息
     let maxEmptyArea = 0;
@@ -984,6 +1084,9 @@ export function parseFloorInfo(
         itemDensity: count(flattened, itemTiles) / area,
         entryCount: count(flattened, entryTiles),
         specialDoorCount: count(flattened, specialDoorTiles),
+        specialDoorLinkedEnemyCount,
+        ignoredIdleEnemyBySpecialDoorCount,
+        ignoredUselessBranchBySpecialDoorCount,
         maxDoorClusterSize,
         maxEnemyClusterSize,
         hasLargeDoorCluster,

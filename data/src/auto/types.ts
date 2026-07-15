@@ -89,6 +89,12 @@ export interface IFloorInfo {
     readonly entryCount: number;
     /** 机关门数量 */
     readonly specialDoorCount: number;
+    /** 机关门关联怪数量 */
+    readonly specialDoorLinkedEnemyCount: number;
+    /** 因机关门关联而被豁免的闲置怪数量 */
+    readonly ignoredIdleEnemyBySpecialDoorCount: number;
+    /** 因机关门关联而被豁免的无用分支数量 */
+    readonly ignoredUselessBranchBySpecialDoorCount: number;
     /** 同类门分支连通块的最大大小 */
     readonly maxDoorClusterSize: number;
     /** 同类怪分支连通块的最大大小 */
@@ -360,6 +366,11 @@ export const enum BranchType {
     Enemy
 }
 
+export const enum DoorKind {
+    Common,
+    Special
+}
+
 export interface IMapGraphNodeBase {
     /** 节点类型 */
     readonly type: GraphNodeType;
@@ -385,6 +396,8 @@ export interface IBranchMapGraphNode extends IMapGraphNodeBase {
     readonly type: GraphNodeType.Branch;
     /** 分支节点类型 */
     readonly branch: BranchType;
+    /** 门子类型，仅 Door 分支有效 */
+    readonly doorKind: DoorKind;
 }
 
 export interface IEntryMapGraphNode extends IMapGraphNodeBase {

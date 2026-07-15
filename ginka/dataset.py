@@ -28,7 +28,8 @@ class GinkaSeperatedDataset(Dataset):
     RESOURCE = 3
     MONSTER = 4
     ENTRANCE = 5
-    MASK_ID = 6
+    SPECIAL_DOOR = 6
+    MASK_ID = 7
     MAP_SIZE = 13 * 13
 
     def __init__(
@@ -51,7 +52,7 @@ class GinkaSeperatedDataset(Dataset):
 
     def compute_density_stats(self) -> dict:
         wall_densities = [self.count_tile(item['map'], self.WALL) / self.MAP_SIZE for item in self.data]
-        door_densities = [self.count_tile(item['map'], self.DOOR) / self.MAP_SIZE for item in self.data]
+        door_densities = [self.count_tile(item['map'], self.DOOR) / self.MAP_SIZE + self.count_tile(item['map'], self.SPECIAL_DOOR) / self.MAP_SIZE for item in self.data]
         monster_densities = [self.count_tile(item['map'], self.MONSTER) / self.MAP_SIZE for item in self.data]
         entrance_densities = [self.count_tile(item['map'], self.ENTRANCE) / self.MAP_SIZE for item in self.data]
         resource_densities = [self.count_tile(item['map'], self.RESOURCE) / self.MAP_SIZE for item in self.data]
@@ -79,7 +80,7 @@ class GinkaSeperatedDataset(Dataset):
     def build_target_density(self, map_data: list) -> torch.Tensor:
         return torch.FloatTensor([
             self.count_tile(map_data, self.WALL) / self.MAP_SIZE,
-            self.count_tile(map_data, self.DOOR) / self.MAP_SIZE,
+            (self.count_tile(map_data, self.DOOR) + self.count_tile(map_data, self.SPECIAL_DOOR)) / self.MAP_SIZE,
             self.count_tile(map_data, self.MONSTER) / self.MAP_SIZE,
             self.count_tile(map_data, self.ENTRANCE) / self.MAP_SIZE,
             self.count_tile(map_data, self.RESOURCE) / self.MAP_SIZE
@@ -153,20 +154,20 @@ class GinkaSeperatedDataset(Dataset):
     def create_degreaded(self, raw: np.ndarray):
         # 阶段一：仅生成墙壁骨架
         target1 = raw.copy()
-        self.degrade_tile(target1, [self.DOOR, self.RESOURCE, self.MONSTER, self.ENTRANCE])
+        self.degrade_tile(target1, [self.DOOR, self.SPECIAL_DOOR, self.RESOURCE, self.MONSTER, self.ENTRANCE])
         inp1 = target1.copy()
-        
+
         # 阶段二：生成怪物、门，同时也允许生成入口以适配结构
         target2 = raw.copy()
         self.degrade_tile(target2, [self.RESOURCE, self.WALL])
         inp2 = raw.copy()
         self.degrade_tile(inp2, [self.RESOURCE])
-        
+
         # 阶段三：生成资源
         target3 = raw.copy()
-        self.degrade_tile(target3, [self.WALL, self.DOOR, self.MONSTER, self.ENTRANCE])
+        self.degrade_tile(target3, [self.WALL, self.DOOR, self.SPECIAL_DOOR, self.MONSTER, self.ENTRANCE])
         inp3 = raw.copy()
-        
+
         return target1, inp1, target2, inp2, target3, inp3
 
     def apply_subset1(self, raw: np.ndarray):
@@ -182,7 +183,7 @@ class GinkaSeperatedDataset(Dataset):
         inp1[self.std_mask()] = self.MASK_ID
 
         # stage2：对 floor+功能元素区域 std_mask
-        need_mask = np.isin(inp2, [self.FLOOR, self.DOOR, self.MONSTER, self.ENTRANCE])
+        need_mask = np.isin(inp2, [self.FLOOR, self.DOOR, self.SPECIAL_DOOR, self.MONSTER, self.ENTRANCE])
         inp2[need_mask & self.std_mask()] = self.MASK_ID
 
         # stage3：对 floor+resource 区域 std_mask
@@ -201,7 +202,7 @@ class GinkaSeperatedDataset(Dataset):
 
         need_mask = np.isin(inp2, [self.FLOOR, self.WALL])
         inp1[need_mask & self.std_mask()] = self.MASK_ID
-        need_mask = np.isin(inp2, [self.FLOOR, self.DOOR, self.MONSTER, self.ENTRANCE])
+        need_mask = np.isin(inp2, [self.FLOOR, self.DOOR, self.SPECIAL_DOOR, self.MONSTER, self.ENTRANCE])
         inp2[need_mask] = self.MASK_ID
         need_mask = np.isin(inp3, [self.FLOOR, self.RESOURCE])
         inp3[need_mask] = self.MASK_ID
