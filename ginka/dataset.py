@@ -3,6 +3,7 @@ import random
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from shared.distance import compute_distance_field
 
 def load_data(path: str):
     with open(path, 'r', encoding="utf-8") as f:
@@ -94,6 +95,8 @@ class GinkaSeperatedDataset(Dataset):
         return enc1, enc2, enc3
 
     def pack_sample(self, item: dict, map_np: np.ndarray, out: tuple) -> dict:
+        # out[2] = encoder_stage1，含完整墙壁，据此计算距离场
+        dist_field = compute_distance_field(out[2])
         return {
             "input_stage1": torch.LongTensor(out[0]),
             "target_stage1": torch.LongTensor(out[1]),
@@ -105,7 +108,8 @@ class GinkaSeperatedDataset(Dataset):
             "target_stage3": torch.LongTensor(out[7]),
             "encoder_stage3": torch.LongTensor(out[8]),
             "struct_inject": self.build_struct_inject(map_np, item['outerWall']),
-            "target_density": self.build_target_density(item['map'])
+            "target_density": self.build_target_density(item['map']),
+            "distance_field": torch.LongTensor(dist_field)
         }
 
     def random_sample_map(self, idx: int | None = None) -> dict:
@@ -122,7 +126,8 @@ class GinkaSeperatedDataset(Dataset):
             "encoder_stage3": torch.LongTensor(enc3),
             "struct_inject": self.build_struct_inject(map_np, item['outerWall']),
             "target_density": self.build_target_density(item['map']),
-            "raw_map": torch.LongTensor(map_np)
+            "raw_map": torch.LongTensor(map_np),
+            "distance_field": torch.LongTensor(compute_distance_field(enc1))
         }
         sample['sample_idx'] = idx
         return sample

@@ -149,6 +149,56 @@ class GinkaVQVAE(nn.Module):
         
         return z_e
 
+class DistFieldEncoder(nn.Module):
+    # 距离场编码器：将 L1 距离场编码为 latent z
+    #
+    # 使用与 GinkaVQVAE 相同的 Transformer 架构但更轻量：
+    #   DistEmbedding (vocab=DIST_VOCAB) → + 2D 位置编码 → + summary tokens
+    #   → 浅层 Transformer → Linear 投影 → z_e_dist [B, L, d_z]
+
+    def __init__(
+        self, vocab: int = 13, L: int = 4, d_z: int = 64,
+        d_model: int = 128, nhead: int = 4, num_layers: int = 3,
+        dim_ff: int = 512, map_h: int = 13, map_w: int = 13
+    ):
+        super().__init__()
+        self.L = L
+        self.map_h = map_h
+        self.map_w = map_w
+
+        self.dist_embedding = nn.Embedding(vocab, d_model)
+        self.row_embedding = nn.Parameter(torch.randn(1, map_h, d_model) * 0.02)
+        self.col_embedding = nn.Parameter(torch.randn(1, map_w, d_model) * 0.02)
+        self.summary_tokens = nn.Parameter(torch.randn(1, L, d_model) * 0.02)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_ff, batch_first=True,
+            activation='gelu', norm_first=True, dropout=0.1,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, d_z),
+            nn.LayerNorm(d_z),
+        )
+
+    def forward(self, dist_field: torch.Tensor) -> torch.Tensor:
+        # dist_field: [B, H*W] 整数，值域 [0, DIST_MAX_BUCKET]
+        B, _ = dist_field.shape
+
+        row_idx = torch.arange(self.map_h, device=dist_field.device).repeat_interleave(self.map_w)
+        col_idx = torch.arange(self.map_w, device=dist_field.device).repeat(self.map_h)
+        pos = self.row_embedding[0, row_idx] + self.col_embedding[0, col_idx]
+
+        x = self.dist_embedding(dist_field) + pos # [B, H*W, d_model]
+        summary = self.summary_tokens.expand(B, -1, -1) # [B, L, d_model]
+        x = torch.cat([summary, x], dim=1) # [B, L+H*W, d_model]
+
+        x = self.transformer(x)
+
+        z_e = self.proj(x[:, :self.L]) # [B, L, d_z]
+        return z_e
+
 if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 

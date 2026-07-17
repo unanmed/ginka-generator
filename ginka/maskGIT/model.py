@@ -7,12 +7,13 @@ from .maskGIT import Transformer
 # 结构标签词表大小
 SYM_VOCAB = 8 # symmetryH/V/C 三位组合 0-7
 OUTER_VOCAB = 2 # outerWall 0-1
+L_DIST = 4 # 距离场码字序列长度
 
 class GinkaMaskGIT(nn.Module):
     def __init__(
         self, num_classes: int = 16, d_model: int = 192, dim_ff: int = 512,
         nhead: int = 8, num_layers: int = 4, map_h: int = 13, map_w: int = 13,
-        d_z: int = 64, z_seq_len: int = 6
+        d_z: int = 64, z_seq_len: int = 6, z_dist_len: int = L_DIST
     ):
         super().__init__()
         self.map_h = map_h
@@ -33,8 +34,11 @@ class GinkaMaskGIT(nn.Module):
         # z 投影：逐 token 线性变换，保持序列结构
         self.z_proj = nn.Linear(d_z, d_z)
 
-        # 条件融合投影：z_seq_len 个 z token + 2 个结构 token + 1 个剩余密度 token
-        self.cond_proj = nn.Linear((z_seq_len + 2 + 5) * d_z, d_model)
+        # 距离场 z 投影
+        self.z_dist_proj = nn.Linear(d_z, d_z)
+
+        # 条件融合投影：z_seq_len 个 z token + z_dist_len 个距离场 token + 2 个结构 token + 5 个剩余密度 token
+        self.cond_proj = nn.Linear((z_seq_len + z_dist_len + 2 + 5) * d_z, d_model)
 
         # 纯 encoder Transformer，条件向量 c 通过 AdaLN 注入每一层
         self.transformer = Transformer(
@@ -47,11 +51,13 @@ class GinkaMaskGIT(nn.Module):
         self,
         map: torch.Tensor,
         z: torch.Tensor,
+        z_dist: torch.Tensor,
         struct: torch.Tensor,
         remain: torch.Tensor
     ) -> torch.Tensor:
-        # map: [B, H * W]
-        # z: [B, z_seq_len, d_z]
+        # map:    [B, H * W]
+        # z:      [B, z_seq_len, d_z]
+        # z_dist: [B, z_dist_len, d_z]
         # struct: [B, 2] — [cond_sym(0-7), cond_outer(0-1)]
         # remain: [B, 5] float — [wall, door, monster, entrance, resource] 剩余密度
 
@@ -61,14 +67,17 @@ class GinkaMaskGIT(nn.Module):
             self.outer_embed(struct[:, 1])
         ], dim=1)
 
-        # 剩余密度：连续浮点向量投影为单个 d_z 维 token，[B, 1, d_z]
+        # 剩余密度：连续浮点向量投影为 d_z 维 token，[B, 5, d_z]
         e_remain = self.remain_proj(remain.unsqueeze(-1))
 
         # z：逐 token 投影，保留序列结构 [B, z_seq_len, d_z]
         z_proj = self.z_proj(z)
 
-        # 拼接所有条件 token → [B, z_seq_len+3, d_z]，展平后投影到 d_model
-        cond_seq = torch.cat([z_proj, e_struct, e_remain], dim=1)
+        # 距离场 z 投影 [B, z_dist_len, d_z]
+        zd_proj = self.z_dist_proj(z_dist)
+
+        # 拼接所有条件 token → 展平后投影到 d_model
+        cond_seq = torch.cat([z_proj, zd_proj, e_struct, e_remain], dim=1)
         c = self.cond_proj(cond_seq.reshape(cond_seq.size(0), -1)) # [B, d_model]
 
         # tile embedding + 位置编码
@@ -113,10 +122,12 @@ if __name__ == "__main__":
         z_seq_len=6
     ).to(device)
 
+    z_dist_input = torch.randn(4, L_DIST, 64).to(device) # [4, L_DIST, 64]
+
     print_memory(device, "初始化后")
 
     start = time.perf_counter()
-    logits = model(map_input, z_input, struct_input, remain_input)
+    logits = model(map_input, z_input, z_dist_input, struct_input, remain_input)
     end = time.perf_counter()
 
     print_memory(device, "前向传播后")
