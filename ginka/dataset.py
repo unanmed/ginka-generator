@@ -10,10 +10,12 @@ def load_data(path: str):
         data = json.load(f)
 
     data_list = []
-    for value in data["data"].values():
+    map_names = []
+    for key, value in data["data"].items():
         data_list.append(value)
+        map_names.append(key)
 
-    return data_list
+    return data_list, map_names
 
 def compute_symmetry(target_np: np.ndarray) -> tuple:
     """从 numpy 地图矩阵中直接计算三种对称性，O(H*W)"""
@@ -39,7 +41,7 @@ class GinkaSeperatedDataset(Dataset):
         subset_weights: tuple = (0.5, 0.3, 0.2),
         density_stats: dict | None = None
     ):
-        self.data = load_data(data_path)
+        self.data, self.map_names = load_data(data_path)
         total = sum(subset_weights)
         self.subset_cumw = [sum(subset_weights[:i+1]) / total for i in range(len(subset_weights))]
 
@@ -130,6 +132,7 @@ class GinkaSeperatedDataset(Dataset):
             "distance_field": torch.LongTensor(compute_distance_field(enc1))
         }
         sample['sample_idx'] = idx
+        sample['map_name'] = self.map_names[idx]
         return sample
 
     def degrade_tile(self, m: np.ndarray, tiles: list) -> np.ndarray:
@@ -240,4 +243,6 @@ class GinkaSeperatedDataset(Dataset):
         else:
             out = self.apply_subset3(map_np)
 
-        return self.pack_sample(item, map_np, out)
+        sample = self.pack_sample(item, map_np, out)
+        sample["map_name"] = self.map_names[idx]
+        return sample

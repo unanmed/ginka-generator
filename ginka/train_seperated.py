@@ -39,8 +39,8 @@ from shared.distance import DIST_VOCAB, compute_distance_field_tensor
 
 # 共用 VQ-VAE 超参
 # 三组编码器（vq1/vq2/vq3）共享相同超参，分别对三阶段地图上下文独立编码
-VQ_L = 16 # 码字序列长度（每个编码器输出 L 个码字，量化后合并为 L*3）
-VQ_K = 32 # codebook 大小（离散码本条目数）
+VQ_L = 8 # 码字序列长度（每个编码器输出 L 个码字，量化后合并为 L*3）
+VQ_K = 16 # codebook 大小（离散码本条目数）
 VQ_D_Z = 64 # 码字维度
 VQ_BETA = 1.0 # commit loss 权重（防止编码器输出漂离 codebook）
 VQ_GAMMA = 0.0 # entropy loss 权重（当前未启用）
@@ -52,9 +52,10 @@ VQ_NHEAD = 4 # VQ-VAE 多头注意力头数
 # 距离场编码器超参
 L_DIST = 4 # 距离场码字序列长度
 K_DIST = 16 # 距离场 codebook 大小
-DIST_D_MODEL = 128 # 距离场编码器模型维度
+DIST_D_MODEL = 256 # 距离场编码器模型维度
 DIST_LAYERS = 3 # 距离场编码器 Transformer 层数
-DIST_DIM_FF = 512 # 距离场编码器 FF 维度
+DIST_DIM_FF = 1024 # 距离场编码器 FF 维度
+DIST_NHEAD = 8 # 距离场编码器注意力头数
 VQ_BETA_DIST = 0.5 # 距离场 commit loss 权重
 
 # 第一阶段 MaskGIT 超参
@@ -103,6 +104,18 @@ RESOURCE_DENSITY_IDX = 4
 
 MG_Z_DROPOUT = 0.1 # z 隐变量 Dropout 概率
 MG_STRUCT_DROPOUT = 0.1 # 结构参量 Dropout 概率
+
+# 邻接损失权重（三阶段）
+LAMBDA_ADJ1 = 0.6
+LAMBDA_ADJ2 = 0.3
+LAMBDA_ADJ3 = 0.1
+
+# Patch 损失权重（三阶段）及核参数
+LAMBDA_PATCH1 = 0.5
+LAMBDA_PATCH2 = 0.5
+LAMBDA_PATCH3 = 0.5
+PATCH_KERNEL_SIZE = 5
+PATCH_SIGMA = 1.2
 
 # 损失参数
 VQ_BETA = 0.5 # 承诺损失权重
@@ -176,7 +189,7 @@ def build_model(device: torch.device):
     # 距离场编码器与量化器：将 L1 距离场编码为离散 latent z_dist
     dist_encoder = DistFieldEncoder(
         vocab=DIST_VOCAB, L=L_DIST, d_z=VQ_D_Z, d_model=DIST_D_MODEL,
-        nhead=VQ_NHEAD, num_layers=DIST_LAYERS, dim_ff=DIST_DIM_FF,
+        nhead=DIST_NHEAD, num_layers=DIST_LAYERS, dim_ff=DIST_DIM_FF,
         map_h=MAP_H, map_w=MAP_W
     ).to(device)
     dist_quantizer = VectorQuantizer(K=K_DIST, d_z=VQ_D_Z).to(device)
@@ -201,6 +214,72 @@ def build_model(device: torch.device):
 def cross_entropy_loss(logits, target):
     # logits: [B, L, C]，需转为 [B, C, L] 以匹配 cross_entropy 期望格式
     return F.cross_entropy(logits.permute(0, 2, 1), target)
+
+def adjacency_loss(logits, target):
+    # 邻接损失：约束相邻两格同时为空地的概率
+    # logits: [B, S, C] — MaskGIT 解码器输出
+    # target: [B, S] — 目标类别 ID，不含 MASK 标记
+    B, S, C = logits.shape
+    H = 13
+    W = 13
+    probs = F.softmax(logits, dim=-1) # [B, S, C]
+    p_floor = probs[:, :, 0].view(B, H, W) # [B, H, W] — 地板概率
+    t = target.view(B, H, W)
+    t_floor = (t == 0).float() # 地板标注为 1，其余为 0
+
+    # 水平边：左格 × 右格
+    joint_h = p_floor[:, :, :-1] * p_floor[:, :, 1:] # [B, H, W-1]
+    target_h = t_floor[:, :, :-1] * t_floor[:, :, 1:] # [B, H, W-1]
+
+    # 垂直边：上格 × 下格
+    joint_v = p_floor[:, :-1, :] * p_floor[:, 1:, :] # [B, H-1, W]
+    target_v = t_floor[:, :-1, :] * t_floor[:, 1:, :] # [B, H-1, W]
+
+    loss_h = F.binary_cross_entropy(joint_h, target_h, reduction='mean')
+    loss_v = F.binary_cross_entropy(joint_v, target_v, reduction='mean')
+    return (loss_h + loss_v) / 2.0
+
+def gaussian_kernel(kernel_size, sigma, device):
+    # 生成归一化二维高斯卷积核 [1, 1, K, K]
+    k = kernel_size
+    center = (k - 1) / 2.0
+    xs = torch.arange(k, dtype=torch.float32, device=device) - center
+    gx = torch.exp(-xs ** 2 / (2.0 * sigma ** 2))
+    gy = torch.exp(-xs ** 2 / (2.0 * sigma ** 2))
+    g2d = gx[:, None] * gy[None, :] # [K, K]
+    g2d = g2d / g2d.sum() # 归一化
+    return g2d.view(1, 1, k, k)
+
+def patch_loss(logits, target, kernel_size=5, sigma=1.2):
+    # Patch 损失：高斯核加权的邻域 CE 平滑损失
+    # logits: [B, S, C]
+    # target: [B, S]
+    B, S, C = logits.shape
+    H = 13
+    W = 13
+
+    # 逐格 CE（不做 reduction）
+    ce = F.cross_entropy(
+        logits.reshape(-1, C), target.reshape(-1), reduction='none'
+    ).view(B, H, W) # [B, H, W]
+
+    # 高斯核
+    kernel = gaussian_kernel(kernel_size, sigma, logits.device) # [1, 1, K, K]
+
+    # replicate 填充后用 unfold 提取邻域
+    pad = kernel_size // 2
+    ce_padded = F.pad(
+        ce.view(B, 1, H, W), (pad, pad, pad, pad), mode='replicate'
+    )
+    # patches: [B, K*K, H*W]
+    patches = F.unfold(ce_padded, kernel_size=(kernel_size, kernel_size))
+    patches = patches.view(B, kernel_size * kernel_size, H, W) # [B, K*K, H, W]
+
+    # 加权求和
+    k_flat = kernel.view(1, kernel_size * kernel_size, 1, 1)
+    smoothed = (patches * k_flat).sum(dim=1) # [B, H, W]
+
+    return smoothed.mean()
 
 def apply_z_dropout(
     z_q: torch.Tensor,
@@ -541,7 +620,7 @@ def build_dataset_sample_case(
     }
 
 def sample_case_label(case: dict) -> str:
-    return f"train#{case['sample_idx']}"
+    return case["sample"]["map_name"]
 
 # 验证可视化 part1：3×3 网格；行1=编码器输入，行2=掩码输入，行3=三阶段预测（合并）
 def visualize_part1(batch, logits1, logits2, logits3, tile_dict):
@@ -573,7 +652,7 @@ def visualize_part1(batch, logits1, logits2, logits3, tile_dict):
     result3[inp3_np == MASK_TOKEN] = pred3[inp3_np == MASK_TOKEN]
 
     rows = [
-        [to_img(enc1_np), to_img(enc2_np), to_img(enc3_np)],
+        [annotate(to_img(enc1_np), batch["map_name"][0]), to_img(enc2_np), to_img(enc3_np)],
         [to_img(inp1_np), to_img(inp2_np), to_img(inp3_np)],
         [to_img(result1), to_img(result2), to_img(result3)],
     ]
@@ -614,7 +693,7 @@ def visualize_part2(batch, z_q, z_dist, models, device, tile_dict):
     target_density_cpu = batch["target_density"][0]
 
     rows = [
-        [to_img(enc1_np), to_img(enc2_np), to_img(enc3_np)],
+        [annotate(to_img(enc1_np), batch["map_name"][0]), to_img(enc2_np), to_img(enc3_np)],
         [
             annotate(to_img(inp1_np), kf_label),
             annotate_labels(to_img(auto_pred1_np), struct_cpu, target_density_cpu),
@@ -712,6 +791,12 @@ def validate(
     loss2_total = torch.Tensor([0]).to(device)
     loss3_total = torch.Tensor([0]).to(device)
     commit_total = torch.Tensor([0]).to(device)
+    adj1_total = torch.Tensor([0]).to(device)
+    adj2_total = torch.Tensor([0]).to(device)
+    adj3_total = torch.Tensor([0]).to(device)
+    patch1_total = torch.Tensor([0]).to(device)
+    patch2_total = torch.Tensor([0]).to(device)
+    patch3_total = torch.Tensor([0]).to(device)
     code_hits_total = torch.zeros(3, quantizer1.K, device=device)
 
     density_metrics = {
@@ -771,6 +856,12 @@ def validate(
             loss2_total += cross_entropy_loss(logits2, target2)
             loss3_total += cross_entropy_loss(logits3, target3)
             commit_total += commit_loss
+            adj1_total += adjacency_loss(logits1, target1)
+            adj2_total += adjacency_loss(logits2, target2)
+            adj3_total += adjacency_loss(logits3, target3)
+            patch1_total += patch_loss(logits1, target1, PATCH_KERNEL_SIZE, PATCH_SIGMA)
+            patch2_total += patch_loss(logits2, target2, PATCH_KERNEL_SIZE, PATCH_SIGMA)
+            patch3_total += patch_loss(logits3, target3, PATCH_KERNEL_SIZE, PATCH_SIGMA)
             code_hits_total += code_hits
 
             # 计算各目标对象的真实密度误差与过量生成密度
@@ -818,7 +909,7 @@ def validate(
     for m in [vq1, vq2, vq3, mg1, mg2, mg3, dist_encoder]:
         m.train()
 
-    return loss1_total, loss2_total, loss3_total, commit_total, code_hits_total
+    return loss1_total, loss2_total, loss3_total, adj1_total, adj2_total, adj3_total, patch1_total, patch2_total, patch3_total, commit_total, code_hits_total
 
 def train(device: torch.device):
     args = parse_arguments()
@@ -902,6 +993,12 @@ def train(device: torch.device):
         loss2_total = torch.Tensor([0]).to(device)
         loss3_total = torch.Tensor([0]).to(device)
         commit_total = torch.Tensor([0]).to(device)
+        adj1_total = torch.Tensor([0]).to(device)
+        adj2_total = torch.Tensor([0]).to(device)
+        adj3_total = torch.Tensor([0]).to(device)
+        patch1_total = torch.Tensor([0]).to(device)
+        patch2_total = torch.Tensor([0]).to(device)
+        patch3_total = torch.Tensor([0]).to(device)
         code_hits_total = torch.zeros(3, quantizer1.K, device=device)
 
         for batch in tqdm(dataloader, leave=False, desc="Epoch Progress", disable=disable_tqdm):
@@ -966,15 +1063,25 @@ def train(device: torch.device):
             logits2 = mg2(inp2, z_q2, z_dist, struct, remain2)
             logits3 = mg3(inp3, z_q3, z_dist, struct, remain3)
 
-            # 三阶段 Cross Entropy + VQ commit loss 加权求和
+            # 三阶段 Cross Entropy + 邻接损失 + Patch 损失 + VQ commit loss 加权求和
             loss1 = cross_entropy_loss(logits1, target1)
             loss2 = cross_entropy_loss(logits2, target2)
             loss3 = cross_entropy_loss(logits3, target3)
+
+            adj1 = adjacency_loss(logits1, target1)
+            adj2 = adjacency_loss(logits2, target2)
+            adj3 = adjacency_loss(logits3, target3)
+            patch1 = patch_loss(logits1, target1, PATCH_KERNEL_SIZE, PATCH_SIGMA)
+            patch2 = patch_loss(logits2, target2, PATCH_KERNEL_SIZE, PATCH_SIGMA)
+            patch3 = patch_loss(logits3, target3, PATCH_KERNEL_SIZE, PATCH_SIGMA)
+
             loss1_weighted = STAGE1_CE_WEIGHT * loss1
             loss2_weighted = STAGE2_CE_WEIGHT * loss2
             loss3_weighted = STAGE3_CE_WEIGHT * loss3
+            adj_weighted = LAMBDA_ADJ1 * adj1 + LAMBDA_ADJ2 * adj2 + LAMBDA_ADJ3 * adj3
+            patch_weighted = LAMBDA_PATCH1 * patch1 + LAMBDA_PATCH2 * patch2 + LAMBDA_PATCH3 * patch3
             commit_weighted = VQ_BETA * commit_loss + VQ_BETA_DIST * commit_loss_dist
-            loss = loss1_weighted + loss2_weighted + loss3_weighted + commit_weighted
+            loss = loss1_weighted + loss2_weighted + loss3_weighted + adj_weighted + patch_weighted + commit_weighted
 
             loss.backward()
             optimizer.step()
@@ -985,6 +1092,12 @@ def train(device: torch.device):
             loss2_total += loss2.detach()
             loss3_total += loss3.detach()
             commit_total += commit_loss.detach()
+            adj1_total += adj1.detach()
+            adj2_total += adj2.detach()
+            adj3_total += adj3.detach()
+            patch1_total += patch1.detach()
+            patch2_total += patch2.detach()
+            patch3_total += patch3.detach()
             code_hits_total += code_hits.detach()
 
         # 每个 epoch 结束后更新学习率
@@ -994,11 +1107,12 @@ def train(device: torch.device):
         train_perplexity, train_usage_rate, train_active_codes = summarize_codebook_hits(code_hits_total)
         tqdm.write(
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-            f"E: {epoch + 1} | Loss: {loss_total.item() / data_length:.6f} | "
-            f"L1: {loss1_total.item() / data_length:.6f} | "
-            f"L2: {loss2_total.item() / data_length:.6f} | "
-            f"L3: {loss3_total.item() / data_length:.6f} | "
-            f"VQ: {commit_total.item() / data_length:.6f} | "
+            f"E: {epoch + 1} | "
+            f"Loss: {loss_total.item() / data_length:.4f} | "
+            f"CE: {loss1_total.item() / data_length:.4f}, {loss2_total.item() / data_length:.4f}, {loss3_total.item() / data_length:.4f} | "
+            f"ADJ: {(LAMBDA_ADJ1 * adj1_total.item() + LAMBDA_ADJ2 * adj2_total.item() + LAMBDA_ADJ3 * adj3_total.item()) / data_length:.4f}, {adj1_total.item() / data_length:.4f}, {adj2_total.item() / data_length:.4f}, {adj3_total.item() / data_length:.4f} | "
+            f"PAT: {(LAMBDA_PATCH1 * patch1_total.item() + LAMBDA_PATCH2 * patch2_total.item() + LAMBDA_PATCH3 * patch3_total.item()) / data_length:.4f}, {patch1_total.item() / data_length:.4f}, {patch2_total.item() / data_length:.4f}, {patch3_total.item() / data_length:.4f} | "
+            f"VQ: {commit_total.item() / data_length:.4f} | "
             f"PPL: {train_perplexity:.4f} | "
             f"Usage: {train_usage_rate:.4f} ({train_active_codes}/{code_hits_total.numel()}) | "
             f"LR: {scheduler.get_last_lr()[0]:.6f}"
@@ -1009,22 +1123,25 @@ def train(device: torch.device):
             losses = validate(
                 dataloader_val, models, dist_models, device, tile_dict, dataset, epoch + 1
             )
-            loss1_total, loss2_total, loss3_total, commit_total, code_hits_total = losses
+            loss1_total, loss2_total, loss3_total, adj1_total, adj2_total, adj3_total, patch1_total, patch2_total, patch3_total, commit_total, code_hits_total = losses
             loss1_weighted = STAGE1_CE_WEIGHT * loss1_total
             loss2_weighted = STAGE2_CE_WEIGHT * loss2_total
             loss3_weighted = STAGE3_CE_WEIGHT * loss3_total
+            adj_weighted = LAMBDA_ADJ1 * adj1_total + LAMBDA_ADJ2 * adj2_total + LAMBDA_ADJ3 * adj3_total
+            patch_weighted = LAMBDA_PATCH1 * patch1_total + LAMBDA_PATCH2 * patch2_total + LAMBDA_PATCH3 * patch3_total
             commit_weighted = VQ_BETA * commit_total
-            loss_total = loss1_weighted + loss2_weighted + loss3_weighted + commit_weighted
+            loss_total = loss1_weighted + loss2_weighted + loss3_weighted + adj_weighted + patch_weighted + commit_weighted
 
             data_length = len(dataloader_val)
             val_perplexity, val_usage_rate, val_active_codes = summarize_codebook_hits(code_hits_total)
             tqdm.write(
                 f"[Validate {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                f"E: {epoch + 1} | Loss: {loss_total.item() / data_length:.6f} | "
-                f"L1: {loss1_total.item() / data_length:.6f} | "
-                f"L2: {loss2_total.item() / data_length:.6f} | "
-                f"L3: {loss3_total.item() / data_length:.6f} | "
-                f"VQ: {commit_total.item() / data_length:.6f} | "
+                f"E: {epoch + 1} | "
+                f"Loss: {loss_total.item() / data_length:.4f} | "
+                f"CE: {loss1_total.item() / data_length:.4f}, {loss2_total.item() / data_length:.4f}, {loss3_total.item() / data_length:.4f} | "
+                f"ADJ: {(LAMBDA_ADJ1 * adj1_total.item() + LAMBDA_ADJ2 * adj2_total.item() + LAMBDA_ADJ3 * adj3_total.item()) / data_length:.4f}, {adj1_total.item() / data_length:.4f}, {adj2_total.item() / data_length:.4f}, {adj3_total.item() / data_length:.4f} | "
+                f"PAT: {(LAMBDA_PATCH1 * patch1_total.item() + LAMBDA_PATCH2 * patch2_total.item() + LAMBDA_PATCH3 * patch3_total.item()) / data_length:.4f}, {patch1_total.item() / data_length:.4f}, {patch2_total.item() / data_length:.4f}, {patch3_total.item() / data_length:.4f} | "
+                f"VQ: {commit_total.item() / data_length:.4f} | "
                 f"PPL: {val_perplexity:.4f} | "
                 f"Usage: {val_usage_rate:.4f} ({val_active_codes}/{code_hits_total.numel()}) | "
             )
