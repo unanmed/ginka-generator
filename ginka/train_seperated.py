@@ -416,6 +416,21 @@ def compute_remaining(
 
     return remain
 
+def rect_mask(
+    ratio: float, h_range: tuple[int, int] = (2, 7),
+    w_range: tuple[int, int] = (2, 7)
+) -> np.ndarray:
+    # 纯矩形分块掩码，反复放置随机矩形直到掩码格数达标
+    target = int(MAP_SIZE * ratio)
+    mask = np.zeros((MAP_H, MAP_W), dtype=bool)
+    while mask.sum() < target:
+        bh = np.random.randint(h_range[0], h_range[1])
+        bw = np.random.randint(w_range[0], w_range[1])
+        x = np.random.randint(0, MAP_H - bh + 1)
+        y = np.random.randint(0, MAP_W - bw + 1)
+        mask[x:x + bh, y:y + bw] = True
+    return mask
+
 def maskgit_sample(
     model: torch.nn.Module, inp: torch.Tensor, z: torch.Tensor,
     z_dist: torch.Tensor, struct: torch.Tensor, target_density: torch.Tensor,
@@ -550,6 +565,71 @@ def full_generate_specific_z(
         merged123[pred3_np != 0] = pred3_np[pred3_np != 0]
 
     return pred1_np, merged12, merged123
+
+def inpaint_generate(
+    raw_map: np.ndarray,
+    mask: np.ndarray,
+    z_q: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    z_dist: torch.Tensor,
+    struct: torch.Tensor,
+    target_density: torch.Tensor,
+    models: list[torch.nn.Module],
+    device: torch.device
+):
+    # 三阶段矩形掩码修补生成
+    # - z 来自完整地图 VQ 编码，作为全局先验
+    # - 未掩码区域的原始图块逐阶段保留，避免被误当空地重填
+    vq1, vq2, vq3, mg1, mg2, mg3, quantizers, optimizer, scheduler = models
+    z1, z2, z3 = z_q
+
+    # Stage1: 补全墙壁
+    inp1 = raw_map.copy()
+    inp1[mask] = MASK_TOKEN
+    non_wf = (inp1 != 0) & (inp1 != 1) & (inp1 != MASK_TOKEN)
+    inp1[non_wf] = 0
+    inp1_t = torch.tensor(inp1.flatten(), dtype=torch.long, device=device).reshape(1, MAP_SIZE)
+
+    with torch.no_grad():
+        pred1_np = maskgit_sample(
+            mg1, inp1_t, z1, z_dist, struct, target_density, 1,
+            GENERATE_STEP, target_tiles=[1], keep_fixed=True
+        )
+
+    # Stage2: 补全门/怪/入口，保留未掩码区的原始非墙壁结构
+    merged_s1 = pred1_np.copy()
+    preserve_s2 = (~mask) & (raw_map != 0) & (raw_map != 1)
+    merged_s1[preserve_s2] = raw_map[preserve_s2]
+
+    inp2 = merged_s1.copy()
+    inp2[inp2 == 0] = MASK_TOKEN
+    inp2_t = torch.tensor(inp2.flatten(), dtype=torch.long, device=device).reshape(1, MAP_SIZE)
+
+    with torch.no_grad():
+        pred2_np = maskgit_sample(
+            mg2, inp2_t, z2, z_dist, struct, target_density, 2,
+            GENERATE_STEP, target_tiles=[2, 6, 4, 5], keep_fixed=True
+        )
+
+    # Stage3: 补全资源，保留未掩码区的原始资源
+    merged_s2 = merged_s1.copy()
+    merged_s2[pred2_np != 0] = pred2_np[pred2_np != 0]
+    res_preserve = (raw_map == 3) & (~mask)
+    merged_s2[res_preserve] = 3
+
+    inp3 = merged_s2.copy()
+    inp3[inp3 == 0] = MASK_TOKEN
+    inp3_t = torch.tensor(inp3.flatten(), dtype=torch.long, device=device).reshape(1, MAP_SIZE)
+
+    with torch.no_grad():
+        pred3_np = maskgit_sample(
+            mg3, inp3_t, z3, z_dist, struct, target_density, 3,
+            GENERATE_STEP, target_tiles=[3], keep_fixed=True
+        )
+
+    merged_s3 = merged_s2.copy()
+    merged_s3[pred3_np != 0] = pred3_np[pred3_np != 0]
+
+    return pred1_np, merged_s1, merged_s2, merged_s3
 
 def annotate(img: np.ndarray, text: str, y: int = 14) -> np.ndarray:
     # 在图片左上角叠加文字标注（黑色描边 + 白色填充，确保任意背景下可读）
@@ -710,7 +790,7 @@ def visualize_part2(batch, z_q, z_dist, models, device, tile_dict):
     return grid
 
 # 验证可视化 part4：2×3 网格；保留稀疏墙壁种子，但 z 与标签来自训练集样本
-def visualize_part4(
+def visualize_rand(
     train_dataset: GinkaSeperatedDataset,
     models: list[torch.nn.Module],
     dist_models: tuple,
@@ -725,33 +805,60 @@ def visualize_part4(
     def to_img(mat):
         return matrix_to_image_cv(mat, tile_dict, TILE_SIZE)
 
-    n_walls = random.randint(math.floor(MAP_SIZE * 0.02), math.floor(MAP_SIZE * 0.06))
-    seed = torch.full((1, MAP_SIZE), MASK_TOKEN, dtype=torch.long, device=device)
-    wall_pos = torch.randperm(MAP_SIZE, device=device)[:n_walls]
-    seed[0, wall_pos] = 1
-    seed_np = seed[0].cpu().numpy().reshape(MAP_H, MAP_W)
+    vq1, vq2, vq3, mg1, mg2, mg3, quantizers, optimizer, scheduler = models
+    dist_encoder, dist_quantizer = dist_models
 
-    results = []
-    for _ in range(5):
-        case = build_dataset_sample_case(train_dataset, models, dist_models, device)
-        kf = rand_keep()
-        sample = case["sample"]
-        _, _, merged123 = full_generate_specific_z(
-            seed, case["z_q"], case["z_dist"], case["struct"], case["target_density"],
-            models, device, keep_fixed=kf
-        )
-        result = annotate_labels(
-            to_img(merged123), sample["struct_inject"], sample["target_density"]
-        )
-        results.append(
-            annotate(result, f"{sample_case_label(case)} {keep_label(kf)}", y=50)
+    samples_data = []
+    for _ in range(4):
+        sample = train_dataset.random_sample_map()
+        raw_map = sample["raw_map"].numpy().reshape(MAP_H, MAP_W)
+        ratio = random.uniform(0.2, 0.8)
+        mask = rect_mask(ratio)
+
+        enc1_t = sample["encoder_stage1"].to(device).reshape(1, MAP_SIZE)
+        enc2_t = sample["encoder_stage2"].to(device).reshape(1, MAP_SIZE)
+        enc3_t = sample["encoder_stage3"].to(device).reshape(1, MAP_SIZE)
+        struct_t = sample["struct_inject"].to(device).reshape(1, -1)
+        target_density_t = sample["target_density"].to(device).reshape(1, -1)
+        dist_field_t = sample["distance_field"].to(device).reshape(1, -1)
+
+        with torch.no_grad():
+            z_e1 = vq1(enc1_t)
+            z_e2 = vq2(enc2_t)
+            z_e3 = vq3(enc3_t)
+            z_q, _, _ = quantize_stage_latents(quantizers, z_e1, z_e2, z_e3)
+            z_e_dist = dist_encoder(dist_field_t)
+            z_dist, _, _, _, _ = dist_quantizer(z_e_dist)
+
+        _, _, _, merged_s3 = inpaint_generate(
+            raw_map, mask, z_q, z_dist, struct_t, target_density_t,
+            models, device
         )
 
-    row1 = [annotate(to_img(seed_np), 'seed')] + results[:2]
-    row2 = results[2:]
-    rows = [row1, row2]
-    grid = np.ones((2 * img_h + 3 * SEP, 3 * img_w + 4 * SEP, 3), dtype=np.uint8) * 255
-    for r, row in enumerate(rows):
+        masked_display = raw_map.copy()
+        masked_display[mask] = MASK_TOKEN
+
+        samples_data.append({
+            "masked": masked_display,
+            "result": merged_s3,
+            "mask": mask,
+            "label": f"{sample['map_name']} {int(ratio * 100)}%"
+        })
+
+    row1 = [
+        annotate(to_img(samples_data[0]["masked"]), samples_data[0]["label"]),
+        to_img(samples_data[0]["result"]),
+        annotate(to_img(samples_data[1]["masked"]), samples_data[1]["label"]),
+        to_img(samples_data[1]["result"]),
+    ]
+    row2 = [
+        annotate(to_img(samples_data[2]["masked"]), samples_data[2]["label"]),
+        to_img(samples_data[2]["result"]),
+        annotate(to_img(samples_data[3]["masked"]), samples_data[3]["label"]),
+        to_img(samples_data[3]["result"]),
+    ]
+    grid = np.ones((2 * img_h + 3 * SEP, 4 * img_w + 5 * SEP, 3), dtype=np.uint8) * 255
+    for r, row in enumerate([row1, row2]):
         for c, img in enumerate(row):
             y = SEP + r * (img_h + SEP)
             x = SEP + c * (img_w + SEP)
@@ -767,7 +874,7 @@ def visualize_validate(
     os.makedirs(save_dir, exist_ok=True)
     cv2.imwrite(f"{save_dir}/val{batch_idx}.png", visualize_part1(batch, logits1, logits2, logits3, tile_dict))
     cv2.imwrite(f"{save_dir}/full{batch_idx}.png", visualize_part2(batch, z_q, z_dist, models, device, tile_dict))
-    cv2.imwrite(f"{save_dir}/rand{batch_idx}.png", visualize_part4(train_dataset, models, dist_models, device, tile_dict))
+    cv2.imwrite(f"{save_dir}/rand{batch_idx}.png", visualize_rand(train_dataset, models, dist_models, device, tile_dict))
 
 def validate(
     dataloader: DataLoader,
